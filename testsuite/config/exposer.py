@@ -1,8 +1,8 @@
 """Translates string to an Exposer class that can initialized"""
 
-from testsuite.gateway.exposers import OpenShiftExposer, LoadBalancerServiceExposer
+from testsuite.gateway.exposers import OpenShiftExposer, LoadBalancerServiceExposer, PowerVSExposer
 
-EXPOSERS = {"openshift": OpenShiftExposer, "kind": LoadBalancerServiceExposer, "kubernetes": LoadBalancerServiceExposer}
+EXPOSERS = {"openshift": OpenShiftExposer, "kind": LoadBalancerServiceExposer, "kubernetes": LoadBalancerServiceExposer, "powervs": PowerVSExposer}
 
 
 # pylint: disable=unused-argument

@@ -4,6 +4,7 @@ from testsuite.gateway import Exposer, Hostname
 from testsuite.httpx import KuadrantClient, ForceSNIClient
 from testsuite.kubernetes.openshift.route import OpenshiftRoute
 
+import time
 
 class OpenShiftExposer(Exposer):
     """Exposes hostnames through OpenShift Route objects"""
@@ -87,3 +88,16 @@ class LoadBalancerServiceExposer(Exposer):
 
     def delete(self):
         pass
+
+class PowerVSExposer(OpenShiftExposer):
+    """
+    Exposer for PowerVS clusters. Identical to OpenShiftExposer but waits
+    for Istio to program the data plane after routes are committed.
+    Needed because Istio may accept the HTTPRoute before fully programming it.
+    """
+    STABILIZE_SECONDS = 15
+
+    def expose_hostname(self, name, exposable) -> Hostname:
+        result = super().expose_hostname(name, exposable)
+        time.sleep(self.STABILIZE_SECONDS)
+        return result

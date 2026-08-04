@@ -89,15 +89,39 @@ class LoadBalancerServiceExposer(Exposer):
     def delete(self):
         pass
 
+class DelayedHostname(Hostname):
+    """
+    Wraps a Hostname and sleeps once before creating the first client.
+    Used on PowerVS where Istio's data plane takes extra seconds to program
+    after wait_for_ready() returns True on the HTTPRoute/policies.
+    """
+
+    def __init__(self, inner: Hostname, delay_seconds: int) -> None:
+        self._inner = inner
+        self._delay_seconds = delay_seconds
+        self._waited = False
+
+    def client(self, **kwargs) -> KuadrantClient:
+        if not self._waited:
+            time.sleep(self._delay_seconds)
+            self._waited = True
+        return self._inner.client(**kwargs)
+
+    @property
+    def hostname(self) -> str:
+        return self._inner.hostname
+
+
 class PowerVSExposer(OpenShiftExposer):
     """
-    Exposer for PowerVS clusters. Identical to OpenShiftExposer but waits
-    for Istio to program the data plane after routes are committed.
-    Needed because Istio may accept the HTTPRoute before fully programming it.
+    Exposer for PowerVS/on-prem clusters where Istio's data plane takes
+    additional time to program after wait_for_ready() returns on HTTPRoute
+    and policies. The delay is applied once, just before the first client
+    request — after all fixtures (route, commit) have completed.
     """
-    STABILIZE_SECONDS = 15
+
+    STABILIZE_SECONDS = 30
 
     def expose_hostname(self, name, exposable) -> Hostname:
-        result = super().expose_hostname(name, exposable)
-        time.sleep(self.STABILIZE_SECONDS)
-        return result
+        route = super().expose_hostname(name, exposable)
+        return DelayedHostname(route, self.STABILIZE_SECONDS)

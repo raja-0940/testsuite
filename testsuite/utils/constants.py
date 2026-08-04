@@ -12,7 +12,8 @@ K8S_WAIT_UNTIL_TIMEOUT = 60
 K8S_DELETE_TIMEOUT = 30
 
 # Timeout for Deployment readiness and rollout.
-DEPLOYMENT_READY_TIMEOUT = 90
+# Increased for PowerVS ppc64le where image pulls are slower.
+DEPLOYMENT_READY_TIMEOUT = 600
 
 # Timeout for Service/LoadBalancer readiness.
 SERVICE_READY_TIMEOUT = 300  # 5 minutes

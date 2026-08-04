@@ -1,10 +1,15 @@
 """General exposers, not tied to Envoy or Gateway API"""
 
+import logging
+import subprocess
+import time
+
 from testsuite.gateway import Exposer, Hostname
 from testsuite.httpx import KuadrantClient, ForceSNIClient
 from testsuite.kubernetes.openshift.route import OpenshiftRoute
 
-import time
+logger = logging.getLogger(__name__)
+
 
 class OpenShiftExposer(Exposer):
     """Exposes hostnames through OpenShift Route objects"""
@@ -89,11 +94,14 @@ class LoadBalancerServiceExposer(Exposer):
     def delete(self):
         pass
 
+
 class DelayedHostname(Hostname):
     """
     Wraps a Hostname and sleeps once before creating the first client.
     Used on PowerVS where Istio's data plane takes extra seconds to program
     after wait_for_ready() returns True on the HTTPRoute/policies.
+    The sleep fires AFTER all fixtures (route, commit) have completed —
+    i.e. just before the test function calls hostname.client().
     """
 
     def __init__(self, inner: Hostname, delay_seconds: int) -> None:
@@ -103,8 +111,25 @@ class DelayedHostname(Hostname):
 
     def client(self, **kwargs) -> KuadrantClient:
         if not self._waited:
-            time.sleep(self._delay_seconds)
             self._waited = True
+            logger.info("[PowerVSExposer] Waiting %ds for Istio data-plane to program...", self._delay_seconds)
+            # Log current cluster state before sleeping
+            try:
+                httproutes = subprocess.run(
+                    ["kubectl", "get", "httproute", "-n", "kuadrant",
+                     "-o", "custom-columns=NAME:.metadata.name,HOSTNAMES:.spec.hostnames"],
+                    capture_output=True, text=True, timeout=10
+                )
+                logger.info("[PowerVSExposer] HTTPRoutes before sleep:\n%s", httproutes.stdout)
+                rlp = subprocess.run(
+                    ["kubectl", "get", "ratelimitpolicy", "-n", "kuadrant"],
+                    capture_output=True, text=True, timeout=10
+                )
+                logger.info("[PowerVSExposer] RateLimitPolicies before sleep:\n%s", rlp.stdout)
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.warning("[PowerVSExposer] Could not query cluster state: %s", exc)
+            time.sleep(self._delay_seconds)
+            logger.info("[PowerVSExposer] Sleep done, creating client for hostname: %s", self._inner.hostname)
         return self._inner.client(**kwargs)
 
     @property
@@ -115,12 +140,12 @@ class DelayedHostname(Hostname):
 class PowerVSExposer(OpenShiftExposer):
     """
     Exposer for PowerVS/on-prem clusters where Istio's data plane takes
-    additional time to program after wait_for_ready() returns on HTTPRoute
-    and policies. The delay is applied once, just before the first client
-    request — after all fixtures (route, commit) have completed.
+    additional time to program after wait_for_ready() returns on the HTTPRoute
+    and policies. The delay fires once, just before the first client request,
+    after all fixtures have completed — giving Istio time to push xDS config.
     """
 
-    STABILIZE_SECONDS = 30
+    STABILIZE_SECONDS = 60
 
     def expose_hostname(self, name, exposable) -> Hostname:
         route = super().expose_hostname(name, exposable)

@@ -97,46 +97,94 @@ class LoadBalancerServiceExposer(Exposer):
 
 class DelayedHostname(Hostname):
     """
-    Wraps a Hostname and sleeps once before creating the first client.
-    Used on PowerVS where Istio's data plane takes extra seconds to program
-    after wait_for_ready() returns True on the HTTPRoute/policies.
-    The sleep fires AFTER all fixtures (route, commit) have completed —
-    i.e. just before the test function calls hostname.client().
+    Wraps a Hostname and actively polls the gateway until Istio's data plane
+    has programmed the HTTPRoute (i.e. stops returning 404).
+    Used on PowerVS where Istio xDS push takes longer than on x86 after
+    wait_for_ready() returns True on the Gateway/HTTPRoute/policies.
+    The probe fires AFTER all fixtures have completed, just before the test
+    function calls hostname.client().
     """
+
+    # Max seconds to wait for Istio to stop returning 404
+    ISTIO_READY_TIMEOUT = 180
+    ISTIO_POLL_INTERVAL = 5
 
     def __init__(self, inner: Hostname, delay_seconds: int) -> None:
         self._inner = inner
-        self._delay_seconds = delay_seconds
+        self._delay_seconds = delay_seconds  # kept for compatibility, used as initial sleep
         self._waited = False
+
+    def _log_cluster_state(self):
+        """Log current state of HTTPRoutes, RateLimitPolicies and OCP Routes for diagnostics."""
+        try:
+            httproutes = subprocess.run(
+                ["kubectl", "get", "httproute", "-n", "kuadrant",
+                 "-o", "custom-columns=NAME:.metadata.name,HOSTNAMES:.spec.hostnames"],
+                capture_output=True, text=True, timeout=10
+            )
+            logger.info("[PowerVSExposer] HTTPRoutes:\n%s", httproutes.stdout)
+            rlp = subprocess.run(
+                ["kubectl", "get", "ratelimitpolicy", "-n", "kuadrant"],
+                capture_output=True, text=True, timeout=10
+            )
+            logger.info("[PowerVSExposer] RateLimitPolicies:\n%s", rlp.stdout)
+            routes = subprocess.run(
+                ["oc", "get", "route", "-n", "kuadrant",
+                 "-o", "custom-columns=NAME:.metadata.name,HOST:.spec.host,SERVICE:.spec.to.name,PORT:.spec.port.targetPort"],
+                capture_output=True, text=True, timeout=10
+            )
+            logger.info("[PowerVSExposer] OCP Routes:\n%s", routes.stdout)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("[PowerVSExposer] Could not query cluster state: %s", exc)
 
     def client(self, **kwargs) -> KuadrantClient:
         if not self._waited:
             self._waited = True
-            logger.info("[PowerVSExposer] Waiting %ds for Istio data-plane to program...", self._delay_seconds)
-            # Log current cluster state before sleeping
-            try:
-                httproutes = subprocess.run(
-                    ["kubectl", "get", "httproute", "-n", "kuadrant",
-                     "-o", "custom-columns=NAME:.metadata.name,HOSTNAMES:.spec.hostnames"],
-                    capture_output=True, text=True, timeout=10
-                )
-                logger.info("[PowerVSExposer] HTTPRoutes before sleep:\n%s", httproutes.stdout)
-                rlp = subprocess.run(
-                    ["kubectl", "get", "ratelimitpolicy", "-n", "kuadrant"],
-                    capture_output=True, text=True, timeout=10
-                )
-                logger.info("[PowerVSExposer] RateLimitPolicies before sleep:\n%s", rlp.stdout)
-                routes = subprocess.run(
-                    ["oc", "get", "route", "-n", "kuadrant",
-                     "-o", "custom-columns=NAME:.metadata.name,HOST:.spec.host,SERVICE:.spec.to.name,PORT:.spec.port.targetPort"],
-                    capture_output=True, text=True, timeout=10
-                )
-                logger.info("[PowerVSExposer] OCP Routes before sleep:\n%s", routes.stdout)
-            except Exception as exc:  # pylint: disable=broad-except
-                logger.warning("[PowerVSExposer] Could not query cluster state: %s", exc)
-            time.sleep(self._delay_seconds)
-            logger.info("[PowerVSExposer] Sleep done, creating client for hostname: %s", self._inner.hostname)
+            self._log_cluster_state()
+            self._wait_for_istio_ready()
         return self._inner.client(**kwargs)
+
+    def _wait_for_istio_ready(self):
+        """
+        Poll the gateway hostname until Istio's Envoy stops returning HTTP 404.
+        A 404 means the xDS config has not been pushed yet.
+        Any other status (200, 429, 401, 403, 503 from Limitador/Authorino) means
+        the virtual host is programmed and the test can proceed.
+        Connection errors (Istio pod not yet ready) are also retried.
+
+        After confirming Istio is ready, we wait an extra 20s so that any rate-limit
+        window started by the probe itself expires before the real test begins.
+        """
+        import httpx as _httpx
+
+        # Use a dedicated probe path; it still matches PathPrefix "/" on the HTTPRoute
+        # but is distinct from the test path "/get" so MockServer access logs stay clean.
+        url = f"http://{self._inner.hostname}/probe-powervs-ready"
+        deadline = time.time() + self.ISTIO_READY_TIMEOUT
+        attempt = 0
+        ready = False
+        while time.time() < deadline:
+            attempt += 1
+            try:
+                resp = _httpx.get(url, timeout=5, follow_redirects=False)
+                status = resp.status_code
+                logger.info("[PowerVSExposer] probe #%d  %s → HTTP %d", attempt, url, status)
+                if status != 404:
+                    logger.info("[PowerVSExposer] Istio xDS programmed after %d probe(s)", attempt)
+                    ready = True
+                    break
+            except _httpx.RequestError as exc:
+                logger.info("[PowerVSExposer] probe #%d  %s → connection error: %s", attempt, url, exc)
+            time.sleep(self.ISTIO_POLL_INTERVAL)
+
+        if not ready:
+            logger.warning("[PowerVSExposer] Istio xDS not ready after %ds; proceeding anyway", self.ISTIO_READY_TIMEOUT)
+            return
+
+        # Wait for any Limitador rate-limit window to reset so probe requests
+        # don't consume quota from the first test window.
+        logger.info("[PowerVSExposer] Waiting 20s for rate-limit window to reset after probe...")
+        time.sleep(20)
 
     @property
     def hostname(self) -> str:

@@ -177,6 +177,7 @@ class KuadrantGateway(KubernetesObject, Gateway):
             "group": "gateway.networking.k8s.io",
             "kind": "Gateway",
             "name": self.name(),
+            "namespace": self.namespace(),
         }
 
     @staticmethod

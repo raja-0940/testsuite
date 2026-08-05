@@ -146,19 +146,24 @@ class DelayedHostname(Hostname):
 
     def _wait_for_istio_ready(self):
         """
-        Poll the gateway hostname until Istio's Envoy stops returning HTTP 404.
-        A 404 means the xDS config has not been pushed yet.
-        Any other status (200, 429, 401, 403, 503 from Limitador/Authorino) means
-        the virtual host is programmed and the test can proceed.
-        Connection errors (Istio pod not yet ready) are also retried.
+        Poll the gateway hostname until Istio is programmed AND the pod has endpoints.
 
-        After confirming Istio is ready, we wait an extra 20s so that any rate-limit
-        window started by the probe itself expires before the real test begins.
+        Response categories:
+          HTTP/1.1 404  — Istio is up, HTTPRoute not yet in xDS (keep waiting)
+          HTTP/1.0 503  — HAProxy: Istio pod has no endpoints yet (keep waiting)
+          connection err — pod not reachable yet (keep waiting)
+          anything else — Istio up, route programmed, backend reachable (done)
+
+        HTTP version discriminates the source:
+          HTTP/1.1 -> came from Istio/Envoy
+          HTTP/1.0 -> came from OCP HAProxy (no backend pod endpoints)
+
+        After readiness is confirmed, wait 20s for the Limitador rate-limit window
+        started by the probes to expire before the real test requests begin.
         """
         import httpx as _httpx
 
-        # Use a dedicated probe path; it still matches PathPrefix "/" on the HTTPRoute
-        # but is distinct from the test path "/get" so MockServer access logs stay clean.
+        # Probe path matches PathPrefix "/" but is distinct from the test path "/get"
         url = f"http://{self._inner.hostname}/probe-powervs-ready"
         deadline = time.time() + self.ISTIO_READY_TIMEOUT
         attempt = 0
@@ -168,22 +173,32 @@ class DelayedHostname(Hostname):
             try:
                 resp = _httpx.get(url, timeout=5, follow_redirects=False)
                 status = resp.status_code
-                logger.info("[PowerVSExposer] probe #%d  %s → HTTP %d", attempt, url, status)
-                if status != 404:
-                    logger.info("[PowerVSExposer] Istio xDS programmed after %d probe(s)", attempt)
+                http_ver = resp.http_version  # "HTTP/1.0" or "HTTP/1.1"
+                logger.info("[PowerVSExposer] probe #%d -> %s %d", attempt, http_ver, status)
+
+                if http_ver == "HTTP/1.0" and status == 503:
+                    # HAProxy no-endpoints: Istio pod not running yet
+                    logger.debug("[PowerVSExposer] HAProxy 503 - pod not ready yet")
+                elif http_ver == "HTTP/1.1" and status == 404:
+                    # Istio running but HTTPRoute not yet in xDS
+                    logger.debug("[PowerVSExposer] Istio 404 - xDS not programmed yet")
+                else:
+                    logger.info("[PowerVSExposer] Istio ready after %d probe(s) (%s %d)",
+                                attempt, http_ver, status)
                     ready = True
                     break
             except _httpx.RequestError as exc:
-                logger.info("[PowerVSExposer] probe #%d  %s → connection error: %s", attempt, url, exc)
+                logger.info("[PowerVSExposer] probe #%d connection error: %s", attempt, exc)
             time.sleep(self.ISTIO_POLL_INTERVAL)
 
         if not ready:
-            logger.warning("[PowerVSExposer] Istio xDS not ready after %ds; proceeding anyway", self.ISTIO_READY_TIMEOUT)
+            logger.warning("[PowerVSExposer] Istio not ready after %ds; proceeding anyway",
+                           self.ISTIO_READY_TIMEOUT)
             return
 
-        # Wait for any Limitador rate-limit window to reset so probe requests
-        # don't consume quota from the first test window.
-        logger.info("[PowerVSExposer] Waiting 20s for rate-limit window to reset after probe...")
+        # Wait for Limitador rate-limit window to reset so probe requests don't
+        # consume quota from the first real test window.
+        logger.info("[PowerVSExposer] Waiting 20s for rate-limit window to reset...")
         time.sleep(20)
 
     @property

@@ -126,6 +126,12 @@ class DelayedHostname(Hostname):
                     capture_output=True, text=True, timeout=10
                 )
                 logger.info("[PowerVSExposer] RateLimitPolicies before sleep:\n%s", rlp.stdout)
+                routes = subprocess.run(
+                    ["oc", "get", "route", "-n", "kuadrant",
+                     "-o", "custom-columns=NAME:.metadata.name,HOST:.spec.host,SERVICE:.spec.to.name,PORT:.spec.port.targetPort"],
+                    capture_output=True, text=True, timeout=10
+                )
+                logger.info("[PowerVSExposer] OCP Routes before sleep:\n%s", routes.stdout)
             except Exception as exc:  # pylint: disable=broad-except
                 logger.warning("[PowerVSExposer] Could not query cluster state: %s", exc)
             time.sleep(self._delay_seconds)
@@ -146,7 +152,29 @@ class PowerVSExposer(OpenShiftExposer):
     """
 
     STABILIZE_SECONDS = 60
+    # How long (seconds) to poll for OCP router to populate spec.host on the Route
+    HOST_ASSIGN_TIMEOUT = 120
+    HOST_ASSIGN_POLL = 3
 
     def expose_hostname(self, name, exposable) -> Hostname:
+        # super().expose_hostname() calls route.commit() which does self.refresh()
+        # but OCP router assigns spec.host asynchronously — it may still be empty.
+        # We wait here until spec.host is populated before @cached_property caches it.
         route = super().expose_hostname(name, exposable)
+        deadline = time.time() + self.HOST_ASSIGN_TIMEOUT
+        while time.time() < deadline:
+            route.refresh()
+            try:
+                host = route.model.spec.host
+            except (AttributeError, KeyError):
+                host = None
+            if host:
+                logger.info("[PowerVSExposer] OCP Route spec.host = %s", host)
+                # Bust the cached_property so it re-reads the now-populated value
+                route.__dict__.pop("hostname", None)
+                break
+            logger.debug("[PowerVSExposer] Waiting for OCP Route spec.host to be assigned...")
+            time.sleep(self.HOST_ASSIGN_POLL)
+        else:
+            logger.warning("[PowerVSExposer] spec.host was never assigned after %ds", self.HOST_ASSIGN_TIMEOUT)
         return DelayedHostname(route, self.STABILIZE_SECONDS)

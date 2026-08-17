@@ -97,25 +97,30 @@ class LoadBalancerServiceExposer(Exposer):
 
 class DelayedHostname(Hostname):
     """
-    Wraps a Hostname and actively polls the gateway until Istio's data plane
-    has programmed the HTTPRoute (i.e. stops returning 404).
-    Used on PowerVS where Istio xDS push takes longer than on x86 after
-    wait_for_ready() returns True on the Gateway/HTTPRoute/policies.
-    The probe fires AFTER all fixtures have completed, just before the test
-    function calls hostname.client().
+    Wraps an OpenshiftRoute and actively probes the gateway until Istio's
+    data plane is programmed (stops returning 404) AND the pod has endpoints
+    (stops returning HTTP/1.0 503 from HAProxy).
+
+    Probe logic:
+      HTTP/1.1 404  -> Istio up, HTTPRoute not yet in xDS (keep waiting)
+      HTTP/1.0 503  -> HAProxy no-endpoints: pod not running (keep waiting)
+      connection err -> pod unreachable (keep waiting)
+      anything else -> Istio up, route programmed, backend reachable (done)
+
+    After readiness is confirmed, waits 20s for any Limitador rate-limit
+    window started by the probes to expire before the real test begins.
     """
 
-    # Max seconds to wait for Istio to stop returning 404
-    ISTIO_READY_TIMEOUT = 180
+    ISTIO_READY_TIMEOUT = 300
     ISTIO_POLL_INTERVAL = 5
 
     def __init__(self, inner: Hostname, delay_seconds: int) -> None:
         self._inner = inner
-        self._delay_seconds = delay_seconds  # kept for compatibility, used as initial sleep
+        self._delay_seconds = delay_seconds
         self._waited = False
 
     def _log_cluster_state(self):
-        """Log current state of HTTPRoutes, RateLimitPolicies and OCP Routes for diagnostics."""
+        """Log HTTPRoutes, RateLimitPolicies and OCP Routes for diagnostics."""
         try:
             httproutes = subprocess.run(
                 ["kubectl", "get", "httproute", "-n", "kuadrant",
@@ -130,7 +135,8 @@ class DelayedHostname(Hostname):
             logger.info("[PowerVSExposer] RateLimitPolicies:\n%s", rlp.stdout)
             routes = subprocess.run(
                 ["oc", "get", "route", "-n", "kuadrant",
-                 "-o", "custom-columns=NAME:.metadata.name,HOST:.spec.host,SERVICE:.spec.to.name,PORT:.spec.port.targetPort"],
+                 "-o", "custom-columns=NAME:.metadata.name,HOST:.spec.host,"
+                       "SERVICE:.spec.to.name,PORT:.spec.port.targetPort"],
                 capture_output=True, text=True, timeout=10
             )
             logger.info("[PowerVSExposer] OCP Routes:\n%s", routes.stdout)
@@ -145,25 +151,8 @@ class DelayedHostname(Hostname):
         return self._inner.client(**kwargs)
 
     def _wait_for_istio_ready(self):
-        """
-        Poll the gateway hostname until Istio is programmed AND the pod has endpoints.
-
-        Response categories:
-          HTTP/1.1 404  — Istio is up, HTTPRoute not yet in xDS (keep waiting)
-          HTTP/1.0 503  — HAProxy: Istio pod has no endpoints yet (keep waiting)
-          connection err — pod not reachable yet (keep waiting)
-          anything else — Istio up, route programmed, backend reachable (done)
-
-        HTTP version discriminates the source:
-          HTTP/1.1 -> came from Istio/Envoy
-          HTTP/1.0 -> came from OCP HAProxy (no backend pod endpoints)
-
-        After readiness is confirmed, wait 20s for the Limitador rate-limit window
-        started by the probes to expire before the real test requests begin.
-        """
         import httpx as _httpx
 
-        # Probe path matches PathPrefix "/" but is distinct from the test path "/get"
         url = f"http://{self._inner.hostname}/probe-powervs-ready"
         deadline = time.time() + self.ISTIO_READY_TIMEOUT
         attempt = 0
@@ -173,14 +162,12 @@ class DelayedHostname(Hostname):
             try:
                 resp = _httpx.get(url, timeout=5, follow_redirects=False)
                 status = resp.status_code
-                http_ver = resp.http_version  # "HTTP/1.0" or "HTTP/1.1"
+                http_ver = resp.http_version
                 logger.info("[PowerVSExposer] probe #%d -> %s %d", attempt, http_ver, status)
 
                 if http_ver == "HTTP/1.0" and status == 503:
-                    # HAProxy no-endpoints: Istio pod not running yet
                     logger.debug("[PowerVSExposer] HAProxy 503 - pod not ready yet")
                 elif http_ver == "HTTP/1.1" and status == 404:
-                    # Istio running but HTTPRoute not yet in xDS
                     logger.debug("[PowerVSExposer] Istio 404 - xDS not programmed yet")
                 else:
                     logger.info("[PowerVSExposer] Istio ready after %d probe(s) (%s %d)",
@@ -196,8 +183,6 @@ class DelayedHostname(Hostname):
                            self.ISTIO_READY_TIMEOUT)
             return
 
-        # Wait for Limitador rate-limit window to reset so probe requests don't
-        # consume quota from the first real test window.
         logger.info("[PowerVSExposer] Waiting 20s for rate-limit window to reset...")
         time.sleep(20)
 
@@ -208,22 +193,18 @@ class DelayedHostname(Hostname):
 
 class PowerVSExposer(OpenShiftExposer):
     """
-    Exposer for PowerVS/on-prem clusters where Istio's data plane takes
-    additional time to program after wait_for_ready() returns on the HTTPRoute
-    and policies. The delay fires once, just before the first client request,
-    after all fixtures have completed — giving Istio time to push xDS config.
+    Exposer for PowerVS clusters where:
+    1. OCP Router assigns spec.host asynchronously (wait before caching)
+    2. Istio xDS push is slower than x86 (active probe before test requests)
     """
 
     STABILIZE_SECONDS = 60
-    # How long (seconds) to poll for OCP router to populate spec.host on the Route
     HOST_ASSIGN_TIMEOUT = 120
     HOST_ASSIGN_POLL = 3
 
     def expose_hostname(self, name, exposable) -> Hostname:
-        # super().expose_hostname() calls route.commit() which does self.refresh()
-        # but OCP router assigns spec.host asynchronously — it may still be empty.
-        # We wait here until spec.host is populated before @cached_property caches it.
         route = super().expose_hostname(name, exposable)
+        # Wait for OCP Router to populate spec.host before @cached_property caches it
         deadline = time.time() + self.HOST_ASSIGN_TIMEOUT
         while time.time() < deadline:
             route.refresh()
@@ -233,11 +214,11 @@ class PowerVSExposer(OpenShiftExposer):
                 host = None
             if host:
                 logger.info("[PowerVSExposer] OCP Route spec.host = %s", host)
-                # Bust the cached_property so it re-reads the now-populated value
                 route.__dict__.pop("hostname", None)
                 break
-            logger.debug("[PowerVSExposer] Waiting for OCP Route spec.host to be assigned...")
+            logger.debug("[PowerVSExposer] Waiting for OCP Route spec.host...")
             time.sleep(self.HOST_ASSIGN_POLL)
         else:
-            logger.warning("[PowerVSExposer] spec.host was never assigned after %ds", self.HOST_ASSIGN_TIMEOUT)
+            logger.warning("[PowerVSExposer] spec.host never assigned after %ds",
+                           self.HOST_ASSIGN_TIMEOUT)
         return DelayedHostname(route, self.STABILIZE_SECONDS)

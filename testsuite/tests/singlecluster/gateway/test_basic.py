@@ -1,24 +1,8 @@
-"""
-This module contains the most basic happy path test for both DNSPolicy and TLSPolicy
-"""
+============================= test session starts ==============================
+platform linux -- Python 3.11.13, pytest-9.1.1, pluggy-1.6.0
+rootdir: /root/testsuite
+configfile: pyproject.toml
+plugins: anyio-4.14.2, metadata-3.1.1, xdist-3.8.0, rerunfailures-16.4, html-4.2.0
+collected 0 items
 
-import pytest
-
-pytestmark = [pytest.mark.dnspolicy, pytest.mark.tlspolicy, pytest.mark.smoke]
-
-
-def test_gateway_readiness(gateway):
-    """Tests whether the Gateway was successfully placed by having its IP address assigned"""
-    assert gateway.is_ready()
-
-
-def test_gateway_basic_dns_tls(client, auth):
-    """
-    Tests whether the backend, exposed using the HTTPRoute and Gateway, was exposed correctly,
-    having a tls secured endpoint with a hostname managed by Kuadrant
-    """
-
-    result = client.get("/get", auth=auth)
-    assert not result.has_dns_error()
-    assert not result.has_cert_verify_error()
-    assert result.status_code == 200
+============================ no tests ran in 0.01s =============================

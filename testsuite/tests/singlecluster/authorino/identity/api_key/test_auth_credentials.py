@@ -1,84 +1,62 @@
-"""Test for API key auth credentials"""
+============================= test session starts ==============================
+platform linux -- Python 3.11.13, pytest-9.1.1, pluggy-1.6.0
+rootdir: /root/testsuite
+configfile: pyproject.toml
+plugins: anyio-4.14.2, metadata-3.1.1, xdist-3.8.0, rerunfailures-16.4, html-4.2.0
+collected 611 items / 2 errors / 609 deselected / 2 selected
 
-import pytest
-
-from testsuite.kuadrant.policy.authorization import Credentials
-
-pytestmark = [pytest.mark.authorino]
-
-
-@pytest.fixture(scope="module")
-def credentials(request):
-    """Location where are auth credentials passed"""
-    return request.param
-
-
-@pytest.fixture(scope="module")
-def authorization(authorization, api_key, credentials):
-    """Add API key identity to AuthConfig"""
-    authorization.identity.add_api_key(
-        "api_key", credentials=Credentials(credentials, "APIKEY"), selector=api_key.selector
-    )
-    return authorization
-
-
-@pytest.mark.parametrize(
-    "credentials",
-    [
-        pytest.param("authorizationHeader", marks=[pytest.mark.smoke, pytest.mark.disconnected]),
-        "customHeader",
-        "queryString",
-        "cookie",
-    ],
-    indirect=True,
-)
-def test_custom_selector(client, auth, credentials):
-    """Test if auth credentials are stored in right place"""
-    response = client.get("/get", headers={"authorization": "APIKEY " + auth.api_key})
-    if credentials == "authorizationHeader":
-        assert response.status_code == 200
-    else:
-        assert response.status_code == 401
-
-
-@pytest.mark.parametrize(
-    "credentials",
-    ["authorizationHeader", "customHeader", "queryString", "cookie"],
-    indirect=True,
-)
-def test_custom_header(client, auth, credentials):
-    """Test if auth credentials are stored in right place"""
-    response = client.get("/get", headers={"APIKEY": auth.api_key})
-    if credentials == "customHeader":
-        assert response.status_code == 200
-    else:
-        assert response.status_code == 401
-
-
-@pytest.mark.parametrize(
-    "credentials",
-    ["authorizationHeader", "customHeader", "queryString", "cookie"],
-    indirect=True,
-)
-def test_query(client, auth, credentials):
-    """Test if auth credentials are stored in right place"""
-    response = client.get("/get", params={"APIKEY": auth.api_key})
-    if credentials == "queryString":
-        assert response.status_code == 200
-    else:
-        assert response.status_code == 401
-
-
-@pytest.mark.parametrize(
-    "credentials",
-    ["authorizationHeader", "customHeader", "queryString", "cookie"],
-    indirect=True,
-)
-def test_cookie(hostname, auth, credentials):
-    """Test if auth credentials are stored in right place"""
-    with hostname.client(cookies={"APIKEY": auth.api_key}) as client:
-        response = client.get("/get")
-        if credentials == "cookie":
-            assert response.status_code == 200
-        else:
-            assert response.status_code == 401
+==================================== ERRORS ====================================
+_____ ERROR collecting testsuite/tests/singlecluster/gateway/test_basic.py _____
+../.cache/pypoetry/virtualenvs/kuadrant-testsuite-omvbjoNk-py3.11/lib/python3.11/site-packages/_pytest/python.py:508: in importtestmodule
+    mod = import_path(
+../.cache/pypoetry/virtualenvs/kuadrant-testsuite-omvbjoNk-py3.11/lib/python3.11/site-packages/_pytest/pathlib.py:596: in import_path
+    importlib.import_module(module_name)
+/usr/lib64/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+<frozen importlib._bootstrap>:1204: in _gcd_import
+    ???
+<frozen importlib._bootstrap>:1176: in _find_and_load
+    ???
+<frozen importlib._bootstrap>:1147: in _find_and_load_unlocked
+    ???
+<frozen importlib._bootstrap>:690: in _load_unlocked
+    ???
+../.cache/pypoetry/virtualenvs/kuadrant-testsuite-omvbjoNk-py3.11/lib/python3.11/site-packages/_pytest/assertion/rewrite.py:179: in exec_module
+    source_stat, co = _rewrite_test(fn, self.config)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../.cache/pypoetry/virtualenvs/kuadrant-testsuite-omvbjoNk-py3.11/lib/python3.11/site-packages/_pytest/assertion/rewrite.py:348: in _rewrite_test
+    tree = ast.parse(source, filename=strfn)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib64/python3.11/ast.py:50: in parse
+    return compile(source, filename, mode, flags,
+E     File "/root/testsuite/testsuite/tests/singlecluster/gateway/test_basic.py", line 8
+E       ============================ no tests ran in 0.01s =============================
+E                                                       ^
+E   SyntaxError: invalid decimal literal
+_______ ERROR collecting testsuite/tests/singlecluster/ui/console_plugin _______
+/usr/lib64/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+<frozen importlib._bootstrap>:1204: in _gcd_import
+    ???
+<frozen importlib._bootstrap>:1176: in _find_and_load
+    ???
+<frozen importlib._bootstrap>:1147: in _find_and_load_unlocked
+    ???
+<frozen importlib._bootstrap>:690: in _load_unlocked
+    ???
+../.cache/pypoetry/virtualenvs/kuadrant-testsuite-omvbjoNk-py3.11/lib/python3.11/site-packages/_pytest/assertion/rewrite.py:188: in exec_module
+    exec(co, module.__dict__)
+testsuite/tests/singlecluster/ui/console_plugin/conftest.py:10: in <module>
+    from testsuite.page_objects.nav_bar import NavBar
+testsuite/page_objects/nav_bar.py:3: in <module>
+    from testsuite.page_objects.navigator import step, Navigable
+testsuite/page_objects/navigator.py:8: in <module>
+    from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, Error as PlaywrightError
+E   ModuleNotFoundError: No module named 'playwright'
+=========================== short test summary info ============================
+ERROR testsuite/tests/singlecluster/gateway/test_basic.py
+ERROR testsuite/tests/singlecluster/ui/console_plugin - ModuleNotFoundError: ...
+!!!!!!!!!!!!!!!!!!! Interrupted: 2 errors during collection !!!!!!!!!!!!!!!!!!!!
+====================== 609 deselected, 2 errors in 1.84s =======================

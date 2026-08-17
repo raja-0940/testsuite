@@ -1,0 +1,117 @@
+[tool.poetry]
+name = "kuadrant-testsuite"
+version = "0.1.0"
+description = "Tests for Kuadrant project"
+authors = ["Kuadrant QE <kuadrantdev@gmail.com>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.group.main.dependencies]
+python = "^3.11"
+typing_extensions = "*"
+pytest-xdist = "*"
+pytest = "*"
+pytest-html = "*"
+dynaconf = "*"
+dnspython = "*"
+python-keycloak = ">=3.6"
+PyJWT = "*"
+lxml = "*"
+cryptography = "*"
+backoff = "*"
+grpcio = "*"
+protobuf = ">=6.31.1,<7"
+httpx = { version = "*", extras = ["http2"] }
+openshift-client = ">=2"
+apyproxy = "*"
+weakget = "*"
+pytest-playwright = "*"
+playwright = "1.57.0"
+pytest-rerunfailures = "*"
+hvac = "^2.4.0"
+
+[tool.poetry.group.dev.dependencies]
+mypy = "*"
+pylint = "*"
+types-PyYAML = "*"
+black = {version = "*", extras = ["d"]}
+types-hvac = "^2.4.0.20260408"
+
+
+# Black
+[tool.black]
+line-length = 120
+
+# Pytest:
+[tool.pytest.ini_options]
+markers = [
+    "issue: Reference to covered issue",
+    "authorino: Test is using Authorino features",
+    "standalone_only: Component test that can only run by itself, without Kuadrant",
+    "kuadrant_only: Component test that can only run as a part of Kuadrant",
+    "limitador: Test is using Limitador features",
+    "tlspolicy: Test is using TLSPolicy",
+    "dnspolicy: Test is using DNSPolicy",
+    "extensions: Test is using the extensions framework",
+    "smoke: Build verification test",
+    "disconnected: Tests that can run on disconnected clusters",
+    "disruptive: Test is disruptive",
+    "multicluster: Test is specifc to Multicluster deployment",
+    "coredns_one_primary: CoreDNS multicluster tests using one primary cluster",
+    "coredns_two_primaries: CoreDNS multicluster tests using two primary clusters",
+    "defaults_overrides: Defaults and Overrides feature tests",
+    "observability: Tracing, metrics and logging tests",
+    "ui: Test uses browser automation via Playwright to test the console plugin UI",
+    "cli: Test is using CLI tools (kubectl-dns, kuadrantctl)",
+    "egress_gateway: Test is using egress gateway",
+    "min_ocp_version: Minimum OpenShift version required for test (e.g., @pytest.mark.min_ocp_version((4, 20)))",
+    "gateway_api_version: Gateway API version requirement (e.g., @pytest.mark.gateway_api_version((1, 5, 0)) or @pytest.mark.gateway_api_version((1, 5, 0), operator.eq))",
+    "user_managed_istio: Test requires user-managed Istio that can be modified (skipped with OCP-managed Istio)",
+    "no_verify_denials: Skip verify-denials check for tests where denied responses reaching the backend is expected",
+]
+filterwarnings = [
+    "ignore: WARNING the new order is not taken into account:UserWarning",
+    "ignore::urllib3.exceptions.InsecureRequestWarning",
+    "ignore::cryptography.utils.CryptographyDeprecationWarning"
+]
+log_format = "%(asctime)s %(levelname)s:%(name)s:%(message)s"
+log_date_format = "%H:%M:%S %z"
+log_level = "INFO"
+junit_logging = "all"
+junit_family = "xunit2"
+xfail_strict = true
+
+# Pylint:
+[tool.pylint.MAIN]
+ignore-paths = ["testsuite/backend/grpc/grpcbin_pb2.py"]
+
+[tool.pylint.FORMAT]
+max-line-length = 120
+disable = [
+    "duplicate-code", # reports false alarms AND can't be disabled locally; pylint issue #214
+    "fixme", # ignore TODOs
+    "redefined-outer-name",
+    "too-many-arguments",
+    "too-many-positional-arguments",
+    "too-few-public-methods"]
+
+[tool.pylint.TYPECHECK]
+generated-members = ["grpcbin_pb2.*"]
+
+[tool.pylint.BASIC]
+good-names=["i","j","k",
+           "pytestmark",
+           "logger",
+           "ca", "gw"]
+
+# Mypy:
+[tool.mypy]
+implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = ["dynaconf.*", "keycloak.*", "weakget.*", "openshift_client.*", "apyproxy.*", "click.*", "py.*", "grpc.*", "google.protobuf.*"]
+ignore_missing_imports = true
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

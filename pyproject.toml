@@ -25,8 +25,6 @@ httpx = { version = "*", extras = ["http2"] }
 openshift-client = ">=2"
 apyproxy = "*"
 weakget = "*"
-pytest-playwright = "*"
-playwright = "1.57.0"
 pytest-rerunfailures = "*"
 hvac = "^2.4.0"
 
@@ -39,6 +37,14 @@ types-hvac = "^2.4.0.20260408"
 
 
 # Black
+
+[[tool.poetry.source]]
+name = "ibm-ppc64le"
+url = "https://wheels.developerfirst.ibm.com/ppc64le/linux"
+priority = "explicit"
+
+[tool.poetry.dependencies]
+grpcio = {version = "1.67.1+ppc64le1", source = "ibm-ppc64le"}
 [tool.black]
 line-length = 120
 

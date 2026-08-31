@@ -9,9 +9,9 @@ import pytest
 @pytest.fixture(autouse=True)
 def uuid_expectation(request, mockserver, module_label):
     """Creates Mockserver Expectation which returns random UUID"""
-    mustache_template = "{ statusCode: 200, body: { 'uuid': '{{ uuid }}' } };"
+    velocity_template = "{ statusCode: 200, body: { 'uuid': '$uuid' } };"
     request.addfinalizer(lambda: mockserver.clear_expectation(module_label))
-    return mockserver.create_template_expectation(module_label, mustache_template)
+    return mockserver.create_template_expectation(module_label, velocity_template, template_type="VELOCITY")
 
 
 @pytest.fixture(scope="module")
@@ -25,3 +25,4 @@ def authorization(authorization):
     """Adds `aut.metadata` to the AuthJson"""
     authorization.responses.add_simple("auth.metadata")
     return authorization
+

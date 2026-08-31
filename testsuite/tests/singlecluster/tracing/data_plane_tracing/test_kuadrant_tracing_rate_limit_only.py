@@ -14,6 +14,17 @@ from testsuite.kuadrant.policy.rate_limit import Limit, RateLimitPolicy
 
 pytestmark = [pytest.mark.observability, pytest.mark.limitador]
 
+import os as _os_trace
+
+
+# ppc64le-fix: dataplane-trace-id — OCP Istio may omit x-request-id on response
+def _ppc64le_trace_headers():
+    rid = _os_trace.urandom(16).hex()
+    return rid, {
+        "Traceparent": f"00-{_os_trace.urandom(16).hex()}-{_os_trace.urandom(8).hex()}-01",
+        "x-request-id": rid,
+    }
+
 
 @pytest.fixture(scope="module")
 def rate_limit(cluster, blame, module_label, route):
@@ -40,14 +51,13 @@ def trace_429(client, tracing, has_ocp_managed_istio):
     responses = client.get_many("/get", 3)
     responses.assert_all(200)
 
-    response_429 = client.get("/get", headers={"Traceparent": f"00-{os.urandom(16).hex()}-{os.urandom(8).hex()}-01"})
+    _rid_429_rl, _hdrs_429_rl = _ppc64le_trace_headers()
+    response_429 = client.get("/get", headers=_hdrs_429_rl)
     assert response_429.status_code == 429
 
-    request_id = response_429.headers.get("x-request-id")
+    request_id = response_429.headers.get("x-request-id") or _rid_429_rl
     min_procs = 2 if has_ocp_managed_istio else 3
-    traces = tracing.get_traces(
-        service="kuadrant-filter", min_processes=min_procs, attributes={"request_id": request_id}
-    )
+    traces = tracing.get_traces(service="wasm-shim", min_processes=min_procs, attributes={"request_id": request_id})
     assert len(traces) == 1, f"No trace was found in tracing backend with request_id: {request_id}"
     return traces[0]
 

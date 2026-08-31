@@ -63,7 +63,7 @@ def external_service(request, exposer, backend, blame, cluster) -> ExternalServi
         # below gets uniqueness for free from the blamed Route hostname.
         return ExternalService(f"{blame('ext')}.{EXTERNAL_DOMAIN}", int(port), "HTTP", address=address)
 
-    route = OpenshiftRoute.create_instance(cluster, blame("backend"), backend.name, "http", tls=True)
+    route = OpenshiftRoute.create_instance(cluster, blame("egress-bk"), backend.name, "http", tls=True)
     request.addfinalizer(route.delete)
     route.commit()
     return ExternalService(route.hostname, 443, "HTTPS")

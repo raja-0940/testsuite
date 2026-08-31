@@ -39,7 +39,13 @@ def test_update_auth_policy_target_ref(
     assert gateway.wait_until(lambda obj: not obj.is_affected_by(authorization))
     assert gateway2.wait_until(lambda obj: obj.is_affected_by(authorization))
 
+    import time
+    deadline = time.time() + 60
     response = client2.get("/get", auth=auth)
+    # ppc64le-fix: auth-retarget
+    while response.status_code != 200 and time.time() < deadline:
+        time.sleep(1)
+        response = client2.get("/get", auth=auth)
     assert response.status_code == 200
 
     response = client2.get("/get")

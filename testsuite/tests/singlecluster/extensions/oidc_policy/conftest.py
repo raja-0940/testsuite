@@ -6,11 +6,14 @@ in their respective test files.
 """
 
 from contextlib import contextmanager
+
+import backoff
 import pytest
 
 from testsuite.gateway import Gateway, GatewayListener, Hostname
 from testsuite.gateway.exposers import OpenShiftExposer
 from testsuite.gateway.gateway_api.gateway import KuadrantGateway
+from testsuite.utils.constants import OIDC_DATAPLANE_READY_INTERVAL, OIDC_DATAPLANE_READY_TIMEOUT
 from testsuite.kuadrant.extensions.oidc_policy import OIDCPolicy
 
 
@@ -76,3 +79,30 @@ def commit(request, oidc_policy):
     request.addfinalizer(oidc_policy.delete)
     oidc_policy.commit()
     oidc_policy.wait_for_ready()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def wait_for_oidc_dataplane(commit, client):  # pylint: disable=unused-argument
+    """
+    # ppc64le-fix: oidc-dataplane
+    Wait until OIDCPolicy redirect is active on the gateway dataplane.
+    OIDCPolicy Enforced / fixed post-enforcement sleep is not enough: traffic
+    can still be fail-opened (HTTP 200) while AuthConfig/wasm is catching up.
+    """
+
+    @backoff.on_predicate(
+        backoff.constant,
+        lambda ready: not ready,
+        interval=OIDC_DATAPLANE_READY_INTERVAL,
+        max_time=OIDC_DATAPLANE_READY_TIMEOUT,
+        jitter=None,
+    )
+    def _wait():
+        try:
+            return client.get("/").status_code == 302
+        except Exception:  # pylint: disable=broad-exception-caught
+            return False
+
+    assert _wait(), (
+        f"Timed out after {OIDC_DATAPLANE_READY_TIMEOUT}s waiting for OIDC dataplane readiness"
+    )

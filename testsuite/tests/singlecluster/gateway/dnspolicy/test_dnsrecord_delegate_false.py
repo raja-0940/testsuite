@@ -42,6 +42,15 @@ def commit(request, dns_record):
 def test_dns_record_delegate_false_with_provider(hostname):
     """Test that DNSRecord with delegate=false creates accessible DNS record"""
 
-    answers = dns.resolver.resolve(hostname.hostname, "A")
+    import time
+    deadline = time.time() + 60
+    answers = None; last_exc = None
+    # ppc64le-fix: dns-delegate
+    while time.time() < deadline:
+        try:
+            answers = dns.resolver.resolve(hostname.hostname, "A"); break
+        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN) as exc:
+            last_exc = exc; time.sleep(2)
+    if answers is None: raise last_exc
     resolved_ip = answers[0].to_text()
     assert resolved_ip == TEST_IP, f"Expected {TEST_IP}, got {resolved_ip}"

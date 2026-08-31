@@ -1,10 +1,17 @@
 """Conftest for Authorino tests"""
 
+import logging
+
+import backoff
 import pytest
 
 from testsuite.httpx.auth import HttpxOidcClientAuth
 from testsuite.kuadrant.authorino import AuthorinoCR, PreexistingAuthorino
 from testsuite.kuadrant.policy.authorization.auth_config import AuthConfig
+LOGGER = logging.getLogger(__name__)
+
+
+from testsuite.utils.constants import AUTH_DATAPLANE_READY_INTERVAL, AUTH_DATAPLANE_READY_TIMEOUT
 
 
 @pytest.fixture(scope="session")
@@ -55,3 +62,59 @@ def commit(request, authorization):
     request.addfinalizer(authorization.delete)
     authorization.commit()
     authorization.wait_for_ready()
+
+
+@pytest.fixture(scope="module")
+def wait_for_unauthenticated_denial():
+    """
+    Whether module setup should poll for unauthenticated /get denial (401/403)
+    as a dataplane-readiness signal. Override to False in modules where that
+    signal is wrong (e.g. mTLS frontend validation, path-conditional AuthPolicies).
+    """
+    return True
+
+
+def _auth_dataplane_ready(response) -> bool:
+    """True when Authorino is active on the request path."""
+    if response.status_code in (401, 403):
+        return True
+    if response.status_code != 200:
+        return False
+    try:
+        headers = response.json().get("headers", {})
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
+    return any(name.lower() == "simple" for name in headers)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def wait_for_auth_dataplane(commit, client, wait_for_unauthenticated_denial):  # pylint: disable=unused-argument
+    """
+    # ppc64le-fix: auth-dataplane
+    Best-effort wait until Authorino is enforcing on the gateway dataplane.
+    AuthPolicy Enforced / first HTTP 200 after wasm 503s is not enough: traffic
+    can be fail-opened while the wasm filter is still loading. Retry an
+    unauthenticated request until identity denial (401/403) or an Authorino
+    'simple' response header appears.
+    """
+    if not wait_for_unauthenticated_denial:
+        return
+
+    @backoff.on_predicate(
+        backoff.constant,
+        lambda ready: not ready,
+        interval=AUTH_DATAPLANE_READY_INTERVAL,
+        max_time=AUTH_DATAPLANE_READY_TIMEOUT,
+        jitter=None,
+    )
+    def _wait():
+        try:
+            return _auth_dataplane_ready(client.get("/get"))
+        except Exception:  # pylint: disable=broad-exception-caught
+            return False
+
+    if not _wait():
+        LOGGER.warning(
+            "Authorino dataplane readiness signal not observed within %ss; continuing",
+            AUTH_DATAPLANE_READY_TIMEOUT,
+        )

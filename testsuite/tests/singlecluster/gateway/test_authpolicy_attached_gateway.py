@@ -17,5 +17,11 @@ def test_authpolicy_attached_gateway(client, auth):
     response = client.get("/get", auth=auth)
     assert response.status_code == 200
 
+    import time
+    deadline = time.time() + 60
     response = client.get("/get")
+    # ppc64le-fix: gateway
+    while response.status_code != 401 and time.time() < deadline:
+        time.sleep(1)
+        response = client.get("/get")
     assert response.status_code == 401

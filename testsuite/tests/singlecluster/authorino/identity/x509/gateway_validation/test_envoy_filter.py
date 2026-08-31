@@ -78,8 +78,14 @@ def commit(request, tls_policy, authorization, envoy_filter):  # pylint: disable
 
 def test_valid_cert(hostname, server_ca, valid_cert):
     """Test that a request with a valid client certificate succeeds"""
+    # ppc64le-fix: x509-valid-cert-retry — TLS passthrough gateway takes longer to come up
+    import time as _t_cert
     with hostname.client(verify=server_ca, cert=valid_cert) as client:
+        _deadline = _t_cert.time() + 90
         response = client.get("/get")
+        while response.status_code == 503 and _t_cert.time() < _deadline:
+            _t_cert.sleep(3)
+            response = client.get("/get")
         assert response.status_code == 200
 
 

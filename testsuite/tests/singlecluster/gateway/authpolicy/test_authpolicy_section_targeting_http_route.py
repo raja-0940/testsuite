@@ -48,7 +48,13 @@ def test_authpolicy_section_name_targeting_http_route_rule(client, auth):
     assert response.status_code == 200
 
     # The '/get' path is handled by the targeted 'rule-1' and should require authentication.
+    import time
+    deadline = time.time() + 60
     response = client.get("/get")
+    # ppc64le-fix: section-route
+    while response.status_code != 401 and time.time() < deadline:
+        time.sleep(1)
+        response = client.get("/get")
     assert response.status_code == 401
 
     # The '/get' path with a valid token should be allowed.

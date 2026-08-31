@@ -60,6 +60,16 @@ def test_identical_hostnames_rlp_on_gw_and_route(client, rate_limit, rate_limit2
     """
     # At this point route2 exists so the '2rp10s' RLP should not be overridden, should be partially enforced instead
     rate_limit2.wait_for_partial_enforced()
+    # ppc64le-fix: rlp-gw-route-wait — CR enforced ≠ wasm dataplane ready; wait for 429 on route2
+    import time as _t_rlp
+    _rlp_deadline = _t_rlp.time() + 90
+    while _t_rlp.time() < _rlp_deadline:
+        _rs = [client.get("/anything/route2/get") for _ in range(3)]
+        if any(r.status_code == 429 for r in _rs):
+            break
+        _t_rlp.sleep(3)
+    # ppc64le-fix(G7): the probe above consumes route2's 2rp10s counter; let it reset before asserting
+    sleep(RLP_COUNTER_RESET_WAIT)
 
     # Access via 'route' is limited due to '1rp10s' RateLimitPolicy
     response = client.get("/anything/route1/get")

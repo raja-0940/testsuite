@@ -56,4 +56,5 @@ def route(route, wildcard_domain):
     """Ensure that route hostname matches the gateway hostname."""
     route.remove_all_hostnames()
     route.add_hostname(wildcard_domain)
+    route.wait_for_ready()
     return route

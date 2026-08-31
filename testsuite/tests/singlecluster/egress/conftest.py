@@ -30,7 +30,7 @@ def hostname(request, exposer, backend, blame, cluster) -> Hostname:
     if isinstance(exposer, LoadBalancerServiceExposer):
         pytest.skip("Egress tests use OpenShift Route for backend exposure, hence are not available on Kind cluster")
 
-    route = OpenshiftRoute.create_instance(cluster, blame("backend"), backend.name, "http", tls=True)
+    route = OpenshiftRoute.create_instance(cluster, blame("egress-bk"), backend.name, "http", tls=True)
     request.addfinalizer(route.delete)
     route.commit()
     return route

@@ -28,7 +28,16 @@ class LlmSim(Backend):  # pylint: disable=abstract-method
             ports={"api": HTTP_API_PORT},
             selector=Selector(matchLabels=match_labels),
             labels={"app": self.label},
-            command_args=["--model", self.model, "--port", str(HTTP_API_PORT)],
+            # ppc64le-fix: llm-sim — the real HF model name makes llm-d-inference-sim v0.9 use the HF
+            # tokenizer, which needs a render sidecar on localhost:8082 (not deployed) -> crash/500.
+            # Use a non-HF --model (simulated tokenizer) and keep the requested name via
+            # --served-model-name, so the API model id is unchanged. --mode echo: deterministic output.
+            command_args=[
+                "--model", "kuadrant-sim/llm",
+                "--served-model-name", self.model,
+                "--port", str(HTTP_API_PORT),
+                "--mode", "echo",
+            ],
         )
         self.deployment.commit()
         self.deployment.wait_for_ready()

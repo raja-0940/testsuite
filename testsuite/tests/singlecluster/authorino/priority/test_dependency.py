@@ -10,12 +10,12 @@ pytestmark = [pytest.mark.authorino]
 @pytest.fixture(scope="module")
 def mockserver_expectation(request, mockserver, module_label):
     """Creates Mockserver Expectation which returns request UUID and sent query parameter with previous request UUID"""
-    mustache_template = (
-        "{ statusCode: 200, body: { 'uuid': '{{ uuid }}', "
-        "'prev_uuid': '{{ request.queryStringParameters.prev_uuid.0 }}' } };"
+    velocity_template = (
+        "{ statusCode: 200, body: { 'uuid': '$uuid', "
+        "'prev_uuid': '$request.queryStringParameters[\"prev_uuid\"][0]' } };"
     )
     request.addfinalizer(lambda: mockserver.clear_expectation(module_label))
-    return mockserver.create_template_expectation(module_label, mustache_template)
+    return mockserver.create_template_expectation(module_label, velocity_template, template_type="VELOCITY")
 
 
 @pytest.fixture(scope="module")
@@ -42,3 +42,4 @@ def test_dependency(client, auth):
 
     assert first_uuid != second_uuid
     assert first_uuid == prev_uuid
+

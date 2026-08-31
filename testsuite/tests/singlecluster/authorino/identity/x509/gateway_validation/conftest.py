@@ -9,6 +9,14 @@ from testsuite.kubernetes.config_map import ConfigMap
 
 
 @pytest.fixture(scope="module")
+def wait_for_unauthenticated_denial():
+    """# ppc64le-fix: x509-gateway
+    mTLS frontend validation: plain unauth /get is not a valid Authorino readiness signal.
+    """
+    return False
+
+
+@pytest.fixture(scope="module")
 def exposer(request, testconfig, cluster) -> Exposer:
     """Exposer object instance with TLS passthrough"""
     exposer = testconfig["default_exposer"](cluster)

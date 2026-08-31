@@ -7,9 +7,14 @@ from testsuite.tracing.models import Trace
 
 
 @pytest.fixture(scope="module", autouse=True)
-def require_tracing_enabled(system_project, skip_or_fail):
+def require_tracing_enabled(system_project, testconfig, skip_or_fail):
     """Skip or fail tests if control plane tracing is not enabled on kuadrant-operator"""
     deployment_name = "kuadrant-operator-controller-manager"
+    # ppc64le-fix: operator-namespace — OLM installs run the operator in a different namespace
+    # (e.g. openshift-operators) than the Kuadrant CR; optional override, defaults to system_project.
+    operator_ns = testconfig["service_protection"].get("operator_project")
+    if operator_ns:
+        system_project = system_project.change_project(operator_ns)
 
     try:
         with system_project.context:

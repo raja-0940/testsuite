@@ -296,3 +296,27 @@ def user_with_write_role(admin_rhsso, blame):
     user = admin_rhsso.realm.create_user(blame("someuser"), blame("password"))
     user.assign_realm_role(admin_rhsso.realm.create_realm_role("admin-write"))
     return HttpxOidcClientAuth.from_user(admin_rhsso.get_token, user=user)
+
+
+@pytest.fixture(scope="module")
+def wait_for_unauthenticated_denial():
+    """Dinosaur AuthPolicy is path/when-conditional; unauth /get is not a readiness signal."""
+    return False
+
+
+@pytest.fixture(scope="module", autouse=True)
+def wait_for_auth_dataplane(commit, client):  # pylint: disable=unused-argument
+    """# ppc64le-fix: dinosaur"""
+    import logging, time
+    logger = logging.getLogger(__name__)
+    deadline = time.time() + 60
+    ready = False
+    while time.time() < deadline:
+        try:
+            if client.get("/anything/dinosaurs_mgmt/v1/dinosaurs").status_code in (401, 403):
+                ready = True; break
+        except Exception:
+            pass
+        time.sleep(1)
+    if not ready:
+        logger.warning("Dinosaur AuthPolicy not denying within 60s; continuing")

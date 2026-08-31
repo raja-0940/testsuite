@@ -65,6 +65,20 @@ def test_policy_update_generates_new_reconciliation_trace(updated_authorization,
             if span.span_id not in snapshot["span_ids"]:
                 new_reconcile_spans.append(span)
 
+    # ppc64le-fix: control-plane-update — get_traces may return before new span arrives
+    import time as _time_cp
+    _cp_deadline = _time_cp.time() + 60
+    while len(new_reconcile_spans) == 0 and _time_cp.time() < _cp_deadline:
+        _time_cp.sleep(2)
+        _updated_traces = tracing.get_traces(
+            service="kuadrant-operator", tags={"policy.name": authorization.name()}, start_time=update_time
+        )
+        new_reconcile_spans = [
+            span
+            for trace in _updated_traces
+            for span in trace.filter_spans(lambda s: s.operation_name == "controller.reconcile")
+            if span.span_id not in snapshot["span_ids"]
+        ]
     assert len(new_reconcile_spans) > 0, "No new reconciliation traces found after policy update"
 
     # Find new policy spans (spans that weren't in the original snapshot)

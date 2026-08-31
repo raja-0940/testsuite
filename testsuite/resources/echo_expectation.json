@@ -12,9 +12,10 @@
     "id": "echo",
     "httpRequest": {},
     "httpResponseTemplate": {
-      "templateType": "JAVASCRIPT",
-      "template": "var headers = {}; for (var key in request.headers) { headers[key] = String(request.headers[key][0]); } return { statusCode: 200, headers: { 'content-type': ['application/json'] }, body: JSON.stringify({ headers: headers, method: request.method, url: request.path }) };"
+      "templateType": "VELOCITY",
+      "template": "#set($q = '\"')#set($sep = '')#set($hdrJson = '{')#foreach($k in $request.headers.keySet())#set($v = $request.headers.get($k).get(0))#set($hdrJson = \"${hdrJson}${sep}${q}${k}${q}:${q}${v}${q}\")#set($sep = ',')#end#set($hdrJson = \"${hdrJson}}\"){\"statusCode\": 200, \"headers\": {\"content-type\": [\"application/json\"]}, \"body\": {\"headers\": $hdrJson, \"method\": \"$request.method\", \"url\": \"$request.path\"}}"
     },
     "priority": -10
   }
 ]
+

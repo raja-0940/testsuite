@@ -1,0 +1,70 @@
+"""Conftest for rate limit tests"""
+
+import os
+
+import pytest
+
+from testsuite.kubernetes.envoy_filter import (
+    create_native_ratelimit_workaround,
+    patch_kuadrant_managed_envoyfilters_to_workload_selector,
+)
+
+
+@pytest.fixture(scope="session")
+def limitador(kuadrant):
+    """Returns Limitador CR."""
+
+    return kuadrant.limitador
+
+
+@pytest.fixture(scope="module", autouse=True)
+def commit(request, rate_limit, gateway, route, limitador):
+    """Commit the RLP and configure the temporary ppc64le workaround."""
+
+    request.addfinalizer(rate_limit.delete)
+
+    workaround_enabled = (
+        os.environ.get("PPC64LE_NATIVE_RLP_WORKAROUND", "false")
+        .strip()
+        .lower()
+        == "true"
+    )
+
+    rate_limit.commit()
+
+    if not workaround_enabled:
+        rate_limit.wait_for_ready()
+        patch_kuadrant_managed_envoyfilters_to_workload_selector(
+            gateway.cluster,
+            gateway,
+        )
+        return
+
+    accepted = rate_limit.wait_until(
+        lambda policy: any(
+            condition.type == "Accepted"
+            and condition.status == "True"
+            for condition in policy.model.status.conditions
+        ),
+        timelimit=90,
+    )
+
+    assert accepted, (
+        "RateLimitPolicy did not reach Accepted=True before applying "
+        "the ppc64le native RLP workaround"
+    )
+
+    patch_kuadrant_managed_envoyfilters_to_workload_selector(
+        gateway.cluster,
+        gateway,
+    )
+
+    native_filter = create_native_ratelimit_workaround(
+        cluster=gateway.cluster,
+        gateway=gateway,
+        route=route,
+        rate_limit=rate_limit,
+        limitador=limitador,
+    )
+
+    request.addfinalizer(native_filter.delete)

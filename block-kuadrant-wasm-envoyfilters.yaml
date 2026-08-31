@@ -1,0 +1,40 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: block-kuadrant-wasm-envoyfilters
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups:
+      - networking.istio.io
+      apiVersions:
+      - v1alpha3
+      operations:
+      - CREATE
+      - UPDATE
+      resources:
+      - envoyfilters
+  validations:
+  - expression: >-
+      !(has(object.metadata.labels) &&
+        "kuadrant.io/managed" in object.metadata.labels &&
+        object.metadata.labels["kuadrant.io/managed"] == "true" &&
+        "kuadrant.io/wasm" in object.metadata.labels &&
+        object.metadata.labels["kuadrant.io/wasm"] == "true")
+    message: >-
+      Blocked Kuadrant-managed Wasm EnvoyFilter because the downstream
+      ppc64le OSSM proxy hangs during Wasm initialization.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: block-kuadrant-wasm-envoyfilters
+spec:
+  policyName: block-kuadrant-wasm-envoyfilters
+  validationActions:
+  - Deny
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kuadrant

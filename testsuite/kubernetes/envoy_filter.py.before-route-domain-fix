@@ -140,7 +140,6 @@ class EnvoyFilter(KubernetesObject):
 def create_native_ratelimit_workaround(
     cluster: KubernetesClient,
     gateway: Gateway,
-    route,
     rate_limit,
     limitador,
 ) -> EnvoyFilter:
@@ -164,17 +163,7 @@ def create_native_ratelimit_workaround(
             f"and Gateway targets. Current target kind: {target_kind}"
         )
 
-    route_name = route.name()
-    expected_domain = f"{cluster.project}/{route_name}"
-
-    logger.info(
-        "Looking for generated Limitador rule for target_kind=%s "
-        "target_name=%s route=%s expected_domain=%s",
-        target_kind,
-        target_name,
-        route_name,
-        expected_domain,
-    )
+    expected_domain = f"{cluster.project}/{target_name}"
     descriptor_pattern = re.compile(
         r'descriptors\[0\]\["([^"]+)"\]\s*==\s*"([^"]+)"'
     )

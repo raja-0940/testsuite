@@ -170,6 +170,16 @@ def route(request, kuadrant, gateway, blame, hostname, backend, module_label) ->
     route.add_backend(backend)
     request.addfinalizer(route.delete)
     route.commit()
+    try:
+        route.wait_for_ready()
+    except AssertionError:
+        # ppc64le-fix(G5): modules that use exact listener hostnames override `route` and replace
+        # hostnames afterwards; the default hostname cannot match such a listener yet.
+        route.refresh()
+        reasons = {c.reason for p in route.model.status.parents for c in p.conditions}
+        if "NoMatchingListenerHostname" not in reasons:
+            raise
+        logging.warning("Route %s: NoMatchingListenerHostname, deferring readiness to override", route.name())
     return route
 
 

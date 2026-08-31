@@ -87,7 +87,9 @@ else = rpt_str {{
 ["grant_type=urn:ietf:params:oauth:grant-type:uma-ticket&ticket=",ticket,"&submit_request=true"])}})\
 .body, "access_token", "")
 }}
+# ppc64le-fix: uma-allow — empty rpt must not jwt.decode (Authorino 500)
 allow {{
+  rpt != ""
   permissions := object.get(io.jwt.decode(rpt)[1], "authorization", {{ "permissions": [] }}).permissions
   permissions[i]
   permissions[i].rsid = resource_id

@@ -12,8 +12,8 @@
     "id": "echo",
     "httpRequest": {},
     "httpResponseTemplate": {
-      "templateType": "JAVASCRIPT",
-      "template": "var headers = {}; for (var key in request.headers) { headers[key] = String(request.headers[key][0]); } return { statusCode: 200, headers: { 'content-type': ['application/json'] }, body: JSON.stringify({ headers: headers, method: request.method, url: request.path }) };"
+      "templateType": "VELOCITY",
+      "template": "#set($first = true)\n{\n  \"statusCode\": 200,\n  \"headers\": {\"content-type\": [\"application/json\"]},\n  \"body\": {\n    \"headers\": {\n#foreach($entry in $request.headers.entrySet())\n#set($raw = $entry.value.get(0))\n#set($q = '\"')\n#set($bs = '\\')\n#set($val = $raw.replace($bs, $bs + $bs).replace($q, $bs + $q))\n#if($first)#set($first = false)#else\n,\n#end\n      \"$entry.key\": \"$val\"\n#end\n    },\n    \"method\": \"$request.method\",\n    \"url\": \"$request.path\"\n  }\n}\n"
     },
     "priority": -10
   }

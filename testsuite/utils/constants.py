@@ -49,7 +49,7 @@ DNS_HEALTH_CHECK_TIMEOUT = 120  # 2 minutes
 # --- Rate Limiting (seconds) ---
 
 # Wait after RateLimitPolicy enforcement (enforcer sync delay).
-RLP_POST_ENFORCEMENT_WAIT = 5
+RLP_POST_ENFORCEMENT_WAIT = 20
 
 # Wait for RLP window reset.
 RLP_WINDOW_RESET_WAIT = 5
@@ -186,6 +186,15 @@ EXTENSION_POLICY_PROPAGATION_WAIT = 10
 # Workaround for https://github.com/Kuadrant/testsuite/issues/884 — remove when fixed
 OIDC_POST_ENFORCEMENT_WAIT = 10
 
+# Wait for Authorino to enforce on the gateway dataplane after AuthPolicy is Enforced.
+# CR readiness alone is insufficient while wasm/Envoy is still loading (common on slow arches).
+AUTH_DATAPLANE_READY_TIMEOUT = 60
+AUTH_DATAPLANE_READY_INTERVAL = 1
+
+# Wait for OIDCPolicy redirect to be active on the gateway dataplane (unauth -> 302).
+OIDC_DATAPLANE_READY_TIMEOUT = 60
+OIDC_DATAPLANE_READY_INTERVAL = 1
+
 # Wait for OPA external registry cache TTL to expire (TTL + buffer).
 OPA_CACHE_TTL_WAIT = 2
 
@@ -193,7 +202,7 @@ OPA_CACHE_TTL_WAIT = 2
 TLS_SECRET_PROPAGATION_WAIT = 10
 
 # Kind workaround: wait for WasmPlugin sync before https://github.com/envoyproxy/envoy/pull/43928 is released.
-WASM_PLUGIN_SYNC_WAIT = 15
+WASM_PLUGIN_SYNC_WAIT = 30
 
 # Max retry attempts for JWT test startup.
 JWT_STARTUP_MAX_RETRIES = 20

@@ -15,6 +15,16 @@ import pytest
 pytestmark = [pytest.mark.observability, pytest.mark.limitador, pytest.mark.authorino, pytest.mark.kuadrant_only]
 
 
+# ppc64le-fix: dataplane-trace-id — OCP Istio may omit x-request-id on response
+def _ppc64le_trace_headers():
+    """Return (request_id, headers) with an explicit x-request-id and a random W3C traceparent."""
+    rid = os.urandom(16).hex()
+    return rid, {
+        "Traceparent": f"00-{os.urandom(16).hex()}-{os.urandom(8).hex()}-01",
+        "x-request-id": rid,
+    }
+
+
 @pytest.fixture(scope="module")
 def trace_request_ids(client, auth):
     """
@@ -23,22 +33,20 @@ def trace_request_ids(client, auth):
     Both are generated together because they share rate limit state:
     the 200 request consumes 1 of 3 allowed, 2 more exhaust the limit, and the next triggers 429.
     """
-    response_200 = client.get(
-        "/get", auth=auth, headers={"Traceparent": f"00-{os.urandom(16).hex()}-{os.urandom(8).hex()}-01"}
-    )
+    _rid_200, _hdrs_200 = _ppc64le_trace_headers()
+    response_200 = client.get("/get", auth=auth, headers=_hdrs_200)
     assert response_200.status_code == 200
 
     responses = client.get_many("/get", 2, auth=auth)
     responses.assert_all(200)
 
-    response_429 = client.get(
-        "/get", auth=auth, headers={"Traceparent": f"00-{os.urandom(16).hex()}-{os.urandom(8).hex()}-01"}
-    )
+    _rid_429, _hdrs_429 = _ppc64le_trace_headers()
+    response_429 = client.get("/get", auth=auth, headers=_hdrs_429)
     assert response_429.status_code == 429
 
     return (
-        response_200.headers.get("x-request-id"),
-        response_429.headers.get("x-request-id"),
+        response_200.headers.get("x-request-id") or _rid_200,
+        response_429.headers.get("x-request-id") or _rid_429,
     )
 
 
@@ -69,10 +77,11 @@ def trace_429(trace_request_ids, tracing, has_ocp_managed_istio):
 @pytest.fixture(scope="module")
 def trace_401(client, tracing, has_ocp_managed_istio):
     """Sends request producing 401 response and fetches the full kuadrant-filter trace"""
-    response_401 = client.get("/get", headers={"Traceparent": f"00-{os.urandom(16).hex()}-{os.urandom(8).hex()}-01"})
+    _rid_401, _hdrs_401 = _ppc64le_trace_headers()
+    response_401 = client.get("/get", headers=_hdrs_401)
     assert response_401.status_code == 401
 
-    request_id = response_401.headers.get("x-request-id")
+    request_id = response_401.headers.get("x-request-id") or _rid_401
     min_procs = 2 if has_ocp_managed_istio else 3
     traces = tracing.get_traces(
         service="kuadrant-filter", min_processes=min_procs, attributes={"request_id": request_id}

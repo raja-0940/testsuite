@@ -136,3 +136,10 @@ logs/*
 
 # macOS system files
 .DS_Store
+
+# ppc64le e2e helpers: local reports, backups and credentials never belong in git
+report-*.html
+*.bak
+*.orig
+*.before-*
+kubeconfig*

@@ -41,7 +41,8 @@ check() { # name, command... ; prints OK/FAIL, never the command output itself
 
 operator_deny_body_ok() { # pod ; the official binary contains the quoted CEL literal "Too Many Requests\n"
     local needle='"Too Many Requests\n"'
-    oc exec -n openshift-operators "$1" -c manager -- cat /manager | grep -aqF "$needle"
+    # grep -c reads the whole stream: grep -q would exit early, SIGPIPE cat and fail under pipefail
+    [ "$(oc exec -n openshift-operators "$1" -c manager -- cat /manager | grep -acF "$needle")" -gt 0 ]
 }
 
 preflight() {

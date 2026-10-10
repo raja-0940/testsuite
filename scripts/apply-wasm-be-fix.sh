@@ -189,10 +189,10 @@ OLD = (
 
 NEW = (
     'pub fn current_log_filter() -> LevelFilter {\n'
-    "    // Workaround for ppc64le (Big Endian) hosts: proxy-wasm-cpp-host's\n"
-    '    // get_log_level hostcall uses setDataType which performs an incorrect\n'
-    '    // endian conversion on BE hosts, causing an out-of-bounds memory fault\n'
-    '    // that crashes the wasm plugin before any policy can be enforced.\n'
+    '    // Optional ppc64le (little-endian) workaround: skip the get_log_level\n'
+    '    // hostcall, which was suspected of failing on an earlier custom ppc64le\n'
+    '    // proxy build. Root cause never confirmed; official RHCL wasm-shim works\n'
+    '    // on OCP 4.22 + OSSM 3.4.3. (#552 is a big-endian/s390x issue only.)\n'
     '    // See: https://github.com/proxy-wasm/proxy-wasm-cpp-host/issues/552\n'
     '    // We skip the hostcall and return the safe default (WARN). The log\n'
     '    // level can still be set via pluginConfig observability.default_level.\n'
@@ -303,7 +303,7 @@ else
 FROM ${IMAGE_TAG} AS wasm-source
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 COPY --from=wasm-source /plugin.wasm /wasm-patched/plugin.wasm
-CMD ["/bin/sh","-c","cp /wasm-patched/plugin.wasm /wasm/plugin.wasm && echo 'ppc64le BE fix: patched wasm injected' && sha256sum /wasm/plugin.wasm"]
+CMD ["/bin/sh","-c","cp /wasm-patched/plugin.wasm /wasm/plugin.wasm && echo 'ppc64le wasm workaround: patched wasm injected' && sha256sum /wasm/plugin.wasm"]
 EOF
   podman build -f "$INJECTOR_CTF" -t "$INJECTOR_TAG" . 2>&1
   rm -f "$INJECTOR_CTF"
@@ -373,7 +373,7 @@ for dep in d['spec']['install']['spec']['deployments']:
         "command": [
             "/bin/sh", "-c",
             "cp /wasm-patched/plugin.wasm /wasm/plugin.wasm && "
-            "echo 'ppc64le BE fix: patched wasm injected' && "
+            "echo 'ppc64le wasm workaround: patched wasm injected' && "
             "sha256sum /wasm/plugin.wasm"
         ],
         "volumeMounts": [{"name": "wasm-patched", "mountPath": "/wasm"}]

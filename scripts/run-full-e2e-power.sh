@@ -2,7 +2,7 @@
 # Full Kuadrant e2e run on ppc64le with the established Power workarounds.
 #
 # Thin wrapper around run-kuadrant-e2e.sh (same pytest options, no extra deselections):
-#   - non-sensitive preflight (cluster, RHCL CSV, BE wasm, dataPlane, Istio tracing, helpers, token validity)
+#   - non-sensitive preflight (cluster, RHCL CSV, served wasm sha, dataPlane, Istio tracing, helpers, token validity)
 #   - timestamped result directory outside the repo
 #   - full-e2e.log / junit-full-e2e.xml / report-full-e2e.html / exit-code.txt / environment.txt
 #   - summary.txt + failures.txt generated from the JUnit file after the run
@@ -14,7 +14,7 @@
 #   RESULTS_ROOT           parent of the run directory (default: /root/test/results)
 #   RUN_DIR                explicit run directory (default: $RESULTS_ROOT/full-e2e-<ts>)
 #   COREDNS_PORT_OVERRIDE  DNS port for *.kuadrant.internal (default: kuadrant-coredns Service NodePort, e.g. 30554)
-#   EXPECTED_WASM_SHA      sha256 prefix of the served wasm (default: v0.15.0 BE build)
+#   EXPECTED_WASM_SHA      sha256 prefix of the served wasm (default: patched v0.15.0 build 41e298e2)
 #   SKIP_PREFLIGHT=1       skip the preflight checks
 
 set -o pipefail

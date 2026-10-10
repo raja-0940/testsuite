@@ -2,16 +2,21 @@
 # =============================================================================
 # apply-wasm-be-fix.sh
 #
-# Applies the ppc64le (Big Endian) wasm-shim workaround for Kuadrant / RHCL
-# operator on OpenShift.
+# Applies the ppc64le wasm-shim workaround for Kuadrant / RHCL operator on
+# OpenShift.
 #
 # BACKGROUND
 # ----------
-# Envoy (istio-proxy) on ppc64le is Big Endian. The WASM spec mandates
-# Little Endian memory layout. When wasm-shim calls the proxy_get_log_level
-# host-call on startup, proxy-wasm-cpp-host performs an endian conversion that
-# produces an out-of-bounds value, crashing the wasm VM before any policy can
-# be enforced. Reference: https://github.com/proxy-wasm/proxy-wasm-cpp-host/issues/552
+# NOTE: ppc64le is a LITTLE-endian architecture (verified on this cluster:
+# lscpu "Byte Order: Little Endian", Envoy ELF EI_DATA=01/LSB). The
+# big-endian issue https://github.com/proxy-wasm/proxy-wasm-cpp-host/issues/552
+# applies to big-endian hosts such as s390x, NOT to ppc64le.
+# This workaround was originally added after the wasm plugin failed to start on
+# an earlier (custom-built) ppc64le proxy setup; the root cause was never
+# confirmed. On OCP 4.22 + OSSM 3.4.3 (official istio-proxyv2-rhel9) the
+# official RHCL 1.5.0 ppc64le wasm-shim image loaded and enforced a
+# RateLimitPolicy without this patch. Treat this script as a legacy, optional
+# local workaround; prefer the official RHCL wasm-shim image.
 #
 # FIX
 # ---
@@ -114,7 +119,7 @@ $SKIP_PUSH  || require_cmd podman
 ARCH=$(uname -m)
 if [[ "$ARCH" != "ppc64le" ]]; then
   warn "Current arch is '$ARCH', not ppc64le."
-  warn "This fix is only needed on ppc64le (Big Endian) clusters."
+  warn "This workaround was only ever used on ppc64le (little-endian) clusters."
   read -rp "Continue anyway? [y/N] " _c
   [[ "${_c,,}" == "y" ]] || exit 0
 fi

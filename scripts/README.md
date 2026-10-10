@@ -6,7 +6,7 @@ the e2e tests. Run all commands from the repository root (`testsuite/`) on the b
 
 | Script | When | Purpose |
 |---|---|---|
-| `apply-wasm-be-fix.sh` | once per operator install | Builds/injects a wasm-shim patched for big-endian (ppc64le) so the Wasm plugin (Auth/RateLimit/TokenRateLimit) loads in Envoy |
+| `apply-wasm-be-fix.sh` | once per operator install | Legacy/optional: builds/injects a patched wasm-shim (log-level hostcall removed). ppc64le is little-endian; the official RHCL 1.5.0 ppc64le wasm-shim loaded and enforced RLP on OCP 4.22 without it |
 | `setup-egress-vault-authorino.sh` | once | Vault Kubernetes auth + Authorino cluster trust bundle (needed by `egress` tests) |
 | `setup-operator-tracing.sh` | once | `OTEL_*` env on the RHCL operator Subscription (needed by `tracing/control_plane` tests) |
 | `setup-dataplane-observability.sh` | once | `spec.observability.dataPlane` on the Kuadrant CR (needed by `tracing/data_plane_tracing` tests) |
@@ -179,7 +179,7 @@ tail -n 100 -f /root/test/results/full-e2e-<ts>/full-e2e.log
 ```
 
 `run-full-e2e-power.sh` refuses to start (exit 2) if a preflight check fails: another pytest is running, nodes/COs
-unhealthy, RHCL CSV, served wasm sha (`EXPECTED_WASM_SHA`, default v0.15.0 BE `41e298e2`), Kuadrant CR dataPlane,
+unhealthy, RHCL CSV, served wasm sha (`EXPECTED_WASM_SHA`, default patched v0.15.0 `41e298e2`; set it to the official wasm sha if the official image is used), Kuadrant CR dataPlane,
 Istio tracing, both helper daemons, kuadrant-coredns NodePort, MetalLB pool, tools pods, settings token (checked with
 `oc whoami`, never printed). Output goes to `RESULTS_ROOT/full-e2e-<ts>/` (default `/root/test/results`):
 `full-e2e.log`, `junit-full-e2e.xml`, `report-full-e2e.html`, `exit-code.txt`, `environment.txt`, `summary.txt`,
@@ -234,7 +234,7 @@ If one fails in a batch run, re-run it alone with `./scripts/run-kuadrant-e2e.sh
 
 | Workaround | Where | Effect on what is tested |
 |---|---|---|
-| BE wasm-shim (`apply-wasm-be-fix.sh`) | CSV `inject-wasm` initContainer + `RELATED_IMAGE_WASMSHIM` | Upstream wasm-shim tag (v0.15.0) with one change: `current_log_filter()` returns `WARN` instead of calling the `proxy_get_log_level` host call that faults on big-endian ([proxy-wasm-cpp-host#552](https://github.com/proxy-wasm/proxy-wasm-cpp-host/issues/552)). Auth/RateLimit/TRLP logic is unchanged; only the wasm log level is fixed at WARN. |
+| BE wasm-shim (`apply-wasm-be-fix.sh`) | CSV `inject-wasm` initContainer + `RELATED_IMAGE_WASMSHIM` | Upstream wasm-shim tag (v0.15.0) with one change: `current_log_filter()` returns `WARN` instead of calling the `proxy_get_log_level` host call. Note: ppc64le is little-endian, so the big-endian issue [proxy-wasm-cpp-host#552](https://github.com/proxy-wasm/proxy-wasm-cpp-host/issues/552) does not apply; the official ppc64le wasm loaded without this patch on OCP 4.22 / OSSM 3.4.3. Auth/RateLimit/TRLP logic is unchanged; only the wasm log level is fixed at WARN. |
 | Operator `denyWith` body check (`run-full-e2e-power.sh` preflight) | operator pod `/manager` | No EnvoyFilter workaround is used. The official RHCL 1.5 image (amd64, s390x, ppc64le) emits the valid CEL body `"Too Many Requests\n"`. A malformed body (`body: Too Many Requests\n"!}`) means the operator binary was modified; preflight fails in that case. Checked: with the official binary the EnvoyFilter `generation` stays at 1 and the gateway answers `200 200 429 429 429`. |
 | `kuadrant-coredns` + resolver plugin | `kuadrant-coredns` ns, `kuadrant_coredns_resolve.py` | Test-side DNS only (`*.kuadrant.internal` from the bastion). DNSPolicy/DNSRecord reconciliation is unchanged. |
 | Dataplane readiness waits (`ppc64le-fix:` in tests) | tests/fixtures | Poll until the dataplane shows the expected behaviour (401/403/429/302), bounded (60–180 s); the original assertions run afterwards. |

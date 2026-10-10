@@ -11,9 +11,8 @@ the e2e tests. Run all commands from the repository root (`testsuite/`) on the b
 | `setup-operator-tracing.sh` | once | `OTEL_*` env on the RHCL operator Subscription (needed by `tracing/control_plane` tests) |
 | `setup-dataplane-observability.sh` | once | `spec.observability.dataPlane` on the Kuadrant CR (needed by `tracing/data_plane_tracing` tests) |
 | `setup-kuadrant-coredns.sh` | once | Deploys `coredns-kuadrant` (reads DNSRecords) on NodePort 30554 (needed by `gateway/*` DNSPolicy tests); `kuadrant-pre-e2e.sh` writes this port into the env file |
-| `kuadrant-pre-e2e.sh` | before every run | Validates the cluster/tools, creates namespaces/services/secrets, updates DNS fields + OCP token in `config/settings.local.yaml`, starts the two helper daemons below, writes the env file |
+| `kuadrant-pre-e2e.sh` | before every run | Validates the cluster/tools, creates namespaces/services/secrets, updates DNS fields + OCP token in `config/settings.local.yaml`, starts the DNS helper daemon below, writes the env file |
 | `sync-kuadrant-dns-etcd.sh` | daemon (started by pre-e2e) | Syncs HTTPRoute hostnames into etcd so `*.kuadrant.internal` resolves from the bastion |
-| `fix-ef-denywith.py` | daemon (started by pre-e2e) | Rewrites the invalid `denyWith` CEL body (`Too Many Requests\n"!}`) that RHCL 1.5 generates in the wasm EnvoyFilter to the quoted string `"Too Many Requests\n"` (see section 7) |
 | `run-kuadrant-e2e.sh` | run | Runs the full suite or selected tests/groups with the standard options |
 | `run-full-e2e-power.sh` | run | Full suite with the Power workarounds: preflight checks, kuadrant-coredns NodePort (discovered, `COREDNS_PORT_OVERRIDE` wins), timestamped dir with `full-e2e.log`, junit, html, `summary.txt`, `failures.txt` |
 
@@ -166,12 +165,8 @@ oc exec -n openshift-operators deploy/kuadrant-operator-controller-manager -c ma
 It writes `/tmp/kuadrant-ppc64le-e2e-env.sh` (override with `ENV_FILE`). `KUADRANT_COREDNS_DNS_PORT` in that file is the
 NodePort of Service `kuadrant-coredns/kuadrant-coredns` (DNSRecord-backed, normally 30554); if that Service is missing it
 falls back to the etcd CoreDNS NodePort 30553 with a warning (DNSPolicy tests then fail). Override with `TEST_DNS_PORT`.
-It also starts these daemons:
-
-- DNS sync: pid in `/tmp/kuadrant-ppc64le-dns-helper.pid`, log in `/tmp/kuadrant-ppc64le-dns-helper.log`
-- EF fix: pid in `/tmp/ef-fix-daemon.pid`, log in `/tmp/ef-fix-daemon.log`
-
-Re-running the script reuses the DNS helper and restarts the EF-fix daemon. Set `RESET_DNS=1` to restart the DNS helper.
+It also starts the DNS sync daemon (pid in `/tmp/kuadrant-ppc64le-dns-helper.pid`, log in
+`/tmp/kuadrant-ppc64le-dns-helper.log`). Re-running the script reuses it; set `RESET_DNS=1` to restart it.
 
 ## 5. Running the tests
 
@@ -223,7 +218,7 @@ Results go to `RESULTS_DIR` (default `~/kuadrant-e2e-results`) as `<name>-e2e-<t
 ```bash
 make clean                                            # remove objects created by the testsuite
 oc get gateway -A                                     # orphan gateways hold MetalLB IPs; delete leftovers
-kill "$(cat /tmp/kuadrant-ppc64le-dns-helper.pid)" "$(cat /tmp/ef-fix-daemon.pid)"   # stop the daemons
+kill "$(cat /tmp/kuadrant-ppc64le-dns-helper.pid)"   # stop the DNS helper
 ```
 
 ### Known order/timing flakes on Power (pass in isolation)
@@ -240,7 +235,7 @@ If one fails in a batch run, re-run it alone with `./scripts/run-kuadrant-e2e.sh
 | Workaround | Where | Effect on what is tested |
 |---|---|---|
 | BE wasm-shim (`apply-wasm-be-fix.sh`) | CSV `inject-wasm` initContainer + `RELATED_IMAGE_WASMSHIM` | Upstream wasm-shim tag (v0.15.0) with one change: `current_log_filter()` returns `WARN` instead of calling the `proxy_get_log_level` host call that faults on big-endian ([proxy-wasm-cpp-host#552](https://github.com/proxy-wasm/proxy-wasm-cpp-host/issues/552)). Auth/RateLimit/TRLP logic is unchanged; only the wasm log level is fixed at WARN. |
-| `fix-ef-denywith.py` | live EnvoyFilters `kuadrant.io/wasm=true` | Replaces the malformed operator CEL `body: Too Many Requests\n"!}` with `body: "Too Many Requests\n"`. Status 429 and headers are unchanged. Without it, every new wasm config is rejected by Envoy (`failed to compile plugin config: InvalidDataExpression`); with `failurePolicy: fail-closed` the gateway then answers 503, or keeps the previous config. The operator re-reconciles the EnvoyFilter and the daemon re-patches it, so the EnvoyFilter `generation` grows continuously while the daemon runs (expected). Not architecture-specific; it is a product defect. |
+| Operator `denyWith` body check (`run-full-e2e-power.sh` preflight) | operator pod `/manager` | No EnvoyFilter workaround is used. The official RHCL 1.5 image (amd64, s390x, ppc64le) emits the valid CEL body `"Too Many Requests\n"`. A malformed body (`body: Too Many Requests\n"!}`) means the operator binary was modified; preflight fails in that case. Checked: with the official binary the EnvoyFilter `generation` stays at 1 and the gateway answers `200 200 429 429 429`. |
 | `kuadrant-coredns` + resolver plugin | `kuadrant-coredns` ns, `kuadrant_coredns_resolve.py` | Test-side DNS only (`*.kuadrant.internal` from the bastion). DNSPolicy/DNSRecord reconciliation is unchanged. |
 | Dataplane readiness waits (`ppc64le-fix:` in tests) | tests/fixtures | Poll until the dataplane shows the expected behaviour (401/403/429/302), bounded (60–180 s); the original assertions run afterwards. |
 | Velocity mockserver templates | `echo_expectation.json`, two authorino fixtures | The ppc64le mockserver build has no JavaScript (Nashorn) engine; same responses in Velocity. |

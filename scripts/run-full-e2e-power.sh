@@ -39,6 +39,11 @@ check() { # name, command... ; prints OK/FAIL, never the command output itself
     if "$@" >/dev/null 2>&1; then echo "OK   $name"; else echo "FAIL $name"; FAILED=1; fi
 }
 
+operator_deny_body_ok() { # pod ; the official binary contains the quoted CEL literal "Too Many Requests\n"
+    local needle='"Too Many Requests\n"'
+    oc exec -n openshift-operators "$1" -c manager -- cat /manager | grep -aqF "$needle"
+}
+
 preflight() {
     FAILED=0
     export KUBECONFIG="$KCFG"
@@ -53,7 +58,7 @@ preflight() {
     check "Kuadrant CR dataPlane observability" bash -c 'oc get kuadrant -n kuadrant-system kuadrant -o jsonpath="{.spec.observability.dataPlane.httpHeaderIdentifier}" | grep -q x-request-id'
     check "Istio tracing (Telemetry + meshConfig)" bash -c 'oc get telemetry -n istio-system default-telemetry && [ "$(oc get istio default -o jsonpath="{.spec.values.meshConfig.enableTracing}")" = true ]'
     check "DNS helper running" pgrep -f sync-kuadrant-dns-etcd.sh
-    check "EnvoyFilter fix daemon running" pgrep -f fix-ef-denywith.py
+    check "operator emits quoted denyWith body (unmodified /manager)" operator_deny_body_ok "$op_pod"
     check "kuadrant-coredns NodePort ${COREDNS_PORT_OVERRIDE}" bash -c "oc get svc -n kuadrant-coredns kuadrant-coredns -o jsonpath='{.spec.ports[*].nodePort}' | grep -qw ${COREDNS_PORT_OVERRIDE}"
     check "MetalLB gateway-pool present" oc get ipaddresspool -n metallb-system gateway-pool
     check "tools pods running (keycloak/mockserver/jaeger/vault)" bash -c 'for a in keycloak mockserver jaeger vault; do oc get pods -n tools --no-headers | grep "^$a" | grep -q Running || exit 1; done'

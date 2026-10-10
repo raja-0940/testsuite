@@ -20,7 +20,6 @@
 #   - validates Keycloak / other prerequisites
 #   - performs a synthetic DNS preflight
 #   - starts sync-kuadrant-dns-etcd.sh in background and leaves it running
-#   - starts fix-ef-denywith.py (EnvoyFilter denyWith CEL fix) in background
 #   - writes an environment file to source before E2E execution
 #
 # Usage:
@@ -473,37 +472,8 @@ if [[ ! -f "$DNS_HELPER_PID_FILE" ]]; then
 fi
 
 
-# ─── 14. EF denyWith CEL fix daemon (ppc64le RHCL v1.5 rate-limit fix) ──────
-# RHCL v1.5 kuadrant-operator generates invalid CEL in the wasm EnvoyFilter:
-#   body: Too Many Requests\n"!}  (unquoted body string + stray chars)
-# Correct form:  body: "Too Many Requests\n"
-# Without this fix wasm-shim refuses to load the plugin config (rate-limit fails open).
-EF_FIX_SCRIPT="${EF_FIX_SCRIPT:-$SCRIPT_DIR/fix-ef-denywith.py}"
-EF_FIX_LOG="${EF_FIX_LOG:-/tmp/ef-fix-daemon.log}"
-EF_FIX_PID_FILE="${EF_FIX_PID_FILE:-/tmp/ef-fix-daemon.pid}"
-
-log "=== 14. Starting EF denyWith CEL fix daemon ==="
-if [[ -f "$EF_FIX_PID_FILE" ]]; then
-    OLD_PID="$(cat "$EF_FIX_PID_FILE")"
-    if kill -0 "$OLD_PID" 2>/dev/null; then
-        ok "EF fix daemon already running (pid=$OLD_PID) — restarting"
-        kill "$OLD_PID" 2>/dev/null || true
-        sleep 1
-    fi
-    rm -f "$EF_FIX_PID_FILE"
-fi
-nohup python3 "$EF_FIX_SCRIPT" >> "$EF_FIX_LOG" 2>&1 &
-EF_FIX_PID=$!
-echo "$EF_FIX_PID" > "$EF_FIX_PID_FILE"
-sleep 3
-if kill -0 "$EF_FIX_PID" 2>/dev/null; then
-    ok "EF fix daemon started (pid=$EF_FIX_PID) log=$EF_FIX_LOG"
-else
-    log "WARNING: EF fix daemon failed to start — check $EF_FIX_LOG" >&2
-fi
-
-# ─── 15. Write environment file ───────────────────────────────────────────────
-log "=== 15. Writing environment file ==="
+# ─── 14. Write environment file ───────────────────────────────────────────────
+log "=== 14. Writing environment file ==="
 # DNS port used by the pytest resolver plugin for *.<zone>. Prefer the kuadrant-coredns NodePort
 # (setup-kuadrant-coredns.sh; serves DNSRecord CRs, required by dnspolicy/listener/retarget tests),
 # fall back to the etcd CoreDNS NodePort. Override with TEST_DNS_PORT.
@@ -540,7 +510,7 @@ export DNS_HELPER_LOG="${DNS_HELPER_LOG}"
 EOF
 ok "Environment file written: $ENV_FILE"
 
-# ─── 16. Final summary ────────────────────────────────────────────────────────
+# ─── 15. Final summary ────────────────────────────────────────────────────────
 log ""
 log "=== Pre-E2E preparation COMPLETE ==="
 log ""

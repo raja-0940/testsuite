@@ -11,7 +11,7 @@ This repository contains end-to-end (E2E) tests for the [Kuadrant](https://kuadr
 * **UI**: Console Plugin
 
 > **IBM Power (ppc64le) / OpenShift with RHCL:** the prerequisites, one-time environment setup, Power-specific
-> workarounds (big-endian wasm-shim, EnvoyFilter `denyWith` fix, kuadrant-coredns), run commands and rollback are
+> workarounds (big-endian wasm-shim, kuadrant-coredns), run commands and rollback are
 > described in [`scripts/README.md`](scripts/README.md).
 
 ## Prerequisites

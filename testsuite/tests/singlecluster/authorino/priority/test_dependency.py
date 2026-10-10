@@ -42,4 +42,3 @@ def test_dependency(client, auth):
 
     assert first_uuid != second_uuid
     assert first_uuid == prev_uuid
-

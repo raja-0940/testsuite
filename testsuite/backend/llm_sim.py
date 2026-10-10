@@ -33,10 +33,14 @@ class LlmSim(Backend):  # pylint: disable=abstract-method
             # Use a non-HF --model (simulated tokenizer) and keep the requested name via
             # --served-model-name, so the API model id is unchanged. --mode echo: deterministic output.
             command_args=[
-                "--model", "kuadrant-sim/llm",
-                "--served-model-name", self.model,
-                "--port", str(HTTP_API_PORT),
-                "--mode", "echo",
+                "--model",
+                "kuadrant-sim/llm",
+                "--served-model-name",
+                self.model,
+                "--port",
+                str(HTTP_API_PORT),
+                "--mode",
+                "echo",
             ],
         )
         self.deployment.commit()

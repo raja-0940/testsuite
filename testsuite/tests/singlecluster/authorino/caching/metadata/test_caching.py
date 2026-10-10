@@ -23,6 +23,7 @@ def test_cached(client, auth, module_label, mockserver):
         - only single external value evaluation occurs. The second response contains cached (in-memory) value
     """
     import time
+
     deadline = time.time() + 60
     warm = client.get("/get", auth=auth)
     # ppc64le-fix: cache-warmup

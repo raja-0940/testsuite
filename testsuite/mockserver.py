@@ -56,7 +56,7 @@ class Mockserver:
         return self._expectation(expectation_id, json_data)
 
     def create_template_expectation(
-        self, expectation_id, template, template_type: Literal["MUSTACHE", "VELOCITY"] = "VELOCITY"
+        self, expectation_id, template, template_type: Literal["MUSTACHE", "VELOCITY"] = "MUSTACHE"
     ):
         """
         Creates template expectation in Mustache or Velocity format.
@@ -82,4 +82,3 @@ class Mockserver:
             params={"type": "REQUESTS", "format": "JSON"},
             json={"headers": {header_name: [header_value]}},
         ).json()
-

@@ -49,6 +49,7 @@ def test_authpolicy_section_name_targeting_http_route_rule(client, auth):
 
     # The '/get' path is handled by the targeted 'rule-1' and should require authentication.
     import time
+
     deadline = time.time() + 60
     response = client.get("/get")
     # ppc64le-fix: section-route

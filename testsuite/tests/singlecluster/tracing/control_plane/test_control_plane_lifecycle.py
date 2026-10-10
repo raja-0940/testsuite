@@ -67,6 +67,7 @@ def test_policy_update_generates_new_reconciliation_trace(updated_authorization,
 
     # ppc64le-fix: control-plane-update — get_traces may return before new span arrives
     import time as _time_cp
+
     _cp_deadline = _time_cp.time() + 60
     while len(new_reconcile_spans) == 0 and _time_cp.time() < _cp_deadline:
         _time_cp.sleep(2)

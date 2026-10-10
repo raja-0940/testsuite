@@ -308,13 +308,15 @@ def wait_for_unauthenticated_denial():
 def wait_for_auth_dataplane(commit, client):  # pylint: disable=unused-argument
     """# ppc64le-fix: dinosaur"""
     import logging, time
+
     logger = logging.getLogger(__name__)
     deadline = time.time() + 60
     ready = False
     while time.time() < deadline:
         try:
             if client.get("/anything/dinosaurs_mgmt/v1/dinosaurs").status_code in (401, 403):
-                ready = True; break
+                ready = True
+                break
         except Exception:
             pass
         time.sleep(1)

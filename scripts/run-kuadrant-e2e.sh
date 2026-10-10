@@ -11,6 +11,7 @@
 #   ENV_FILE                env file written by kuadrant-pre-e2e.sh
 #   RESULTS_DIR             where logs / junit / html are written
 #   RUN_NAME                name used for the result files (default: kuadrant or "group")
+#   LOG_FILE / JUNIT_FILE / HTML_FILE  explicit output paths (default: <RESULTS_DIR>/<name>-<ts>.*)
 #   COREDNS_PORT_OVERRIDE   resolve *.kuadrant.internal via the kuadrant-coredns NodePort
 #                           (e.g. 30554, see setup-kuadrant-coredns.sh) - needed by dnspolicy tests
 
@@ -37,9 +38,9 @@ else
     TARGETS=(testsuite/tests/singlecluster)
 fi
 TS="$(date +%Y%m%d%H%M%S)"
-LOG="${RESULTS_DIR}/${RUN_NAME}-e2e-${TS}.log"
-JUNIT="${RESULTS_DIR}/junit-${RUN_NAME}-${TS}.xml"
-HTML="${RESULTS_DIR}/report-${RUN_NAME}-${TS}.html"
+LOG="${LOG_FILE:-${RESULTS_DIR}/${RUN_NAME}-e2e-${TS}.log}"
+JUNIT="${JUNIT_FILE:-${RESULTS_DIR}/junit-${RUN_NAME}-${TS}.xml}"
+HTML="${HTML_FILE:-${RESULTS_DIR}/report-${RUN_NAME}-${TS}.html}"
 
 echo "============================================================"
 echo "Kuadrant PPC64LE E2E (${RUN_NAME})"

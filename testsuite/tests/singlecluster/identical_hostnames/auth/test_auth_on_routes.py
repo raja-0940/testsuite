@@ -53,6 +53,7 @@ def test_identical_hostnames_auth_on_routes(client, authorization):
 
     # ppc64le-fix: identical-hostnames
     import time
+
     deadline = time.time() + 60
     response = client.get("/anything/route2/get")
     while response.status_code != 403 and time.time() < deadline:

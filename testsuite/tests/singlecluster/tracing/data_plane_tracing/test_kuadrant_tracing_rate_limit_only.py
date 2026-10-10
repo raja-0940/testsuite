@@ -14,14 +14,13 @@ from testsuite.kuadrant.policy.rate_limit import Limit, RateLimitPolicy
 
 pytestmark = [pytest.mark.observability, pytest.mark.limitador]
 
-import os as _os_trace
-
 
 # ppc64le-fix: dataplane-trace-id — OCP Istio may omit x-request-id on response
 def _ppc64le_trace_headers():
-    rid = _os_trace.urandom(16).hex()
+    """Return (request_id, headers) with an explicit x-request-id and a random W3C traceparent."""
+    rid = os.urandom(16).hex()
     return rid, {
-        "Traceparent": f"00-{_os_trace.urandom(16).hex()}-{_os_trace.urandom(8).hex()}-01",
+        "Traceparent": f"00-{os.urandom(16).hex()}-{os.urandom(8).hex()}-01",
         "x-request-id": rid,
     }
 
@@ -57,7 +56,9 @@ def trace_429(client, tracing, has_ocp_managed_istio):
 
     request_id = response_429.headers.get("x-request-id") or _rid_429_rl
     min_procs = 2 if has_ocp_managed_istio else 3
-    traces = tracing.get_traces(service="wasm-shim", min_processes=min_procs, attributes={"request_id": request_id})
+    traces = tracing.get_traces(
+        service="kuadrant-filter", min_processes=min_procs, attributes={"request_id": request_id}
+    )
     assert len(traces) == 1, f"No trace was found in tracing backend with request_id: {request_id}"
     return traces[0]
 

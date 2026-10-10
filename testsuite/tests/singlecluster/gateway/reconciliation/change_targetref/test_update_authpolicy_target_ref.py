@@ -2,9 +2,24 @@
 Test for changing targetRef field in AuthPolicy
 """
 
+import time
+
 import pytest
 
 from testsuite.kuadrant.policy.authorization.auth_policy import AuthPolicy
+
+DATAPLANE_TIMEOUT = 180
+
+
+def _wait_for_status(client, status, **kwargs):
+    """ppc64le-fix: auth-retarget - Gateway "affected by" is set before Envoy loads the new wasm config.
+
+    Poll until the dataplane returns the expected status (max DATAPLANE_TIMEOUT s). The caller still asserts it.
+    """
+    deadline = time.time() + DATAPLANE_TIMEOUT
+    while client.get("/get", **kwargs).status_code != status and time.time() < deadline:
+        time.sleep(1)
+
 
 pytestmark = [pytest.mark.authorino, pytest.mark.kuadrant_only, pytest.mark.dnspolicy]
 
@@ -25,6 +40,7 @@ def test_update_auth_policy_target_ref(
     assert gateway.wait_until(lambda obj: obj.is_affected_by(authorization))
     assert gateway2.wait_until(lambda obj: not obj.is_affected_by(authorization))
 
+    _wait_for_status(client, 401)
     response = client.get("/get", auth=auth)
     assert response.status_code == 200
 
@@ -39,13 +55,9 @@ def test_update_auth_policy_target_ref(
     assert gateway.wait_until(lambda obj: not obj.is_affected_by(authorization))
     assert gateway2.wait_until(lambda obj: obj.is_affected_by(authorization))
 
-    import time
-    deadline = time.time() + 60
+    _wait_for_status(client2, 401)
+    _wait_for_status(client, 200)
     response = client2.get("/get", auth=auth)
-    # ppc64le-fix: auth-retarget
-    while response.status_code != 200 and time.time() < deadline:
-        time.sleep(1)
-        response = client2.get("/get", auth=auth)
     assert response.status_code == 200
 
     response = client2.get("/get")

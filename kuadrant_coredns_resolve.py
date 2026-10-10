@@ -1,7 +1,8 @@
 """Pytest plugin: resolve Kuadrant DNSPolicy hostnames via cluster CoreDNS.
-   ppc64le adaptation of the s390x CI workflow getaddrinfo resolver.
-   Redirects *.kuadrant.internal lookups to CoreDNS ClusterIP:5353.
+ppc64le adaptation of the s390x CI workflow getaddrinfo resolver.
+Redirects *.kuadrant.internal lookups to CoreDNS ClusterIP:5353.
 """
+
 from __future__ import annotations
 import os, socket, struct, sys
 
@@ -40,33 +41,38 @@ def _dns_query_a(name: str) -> str | None:
                 s.sendall(struct.pack("!H", len(payload)) + payload)
                 s.settimeout(3.0)
                 lb = s.recv(2)
-                if len(lb) < 2: return None
+                if len(lb) < 2:
+                    return None
                 (ml,) = struct.unpack("!H", lb)
                 data = b""
                 while len(data) < ml:
                     c = s.recv(ml - len(data))
-                    if not c: break
+                    if not c:
+                        break
                     data += c
         except OSError:
             return None
-    if len(data) < 12: return None
+    if len(data) < 12:
+        return None
     ancount = struct.unpack("!H", data[6:8])[0]
     i = 12
     while i < len(data) and data[i] != 0:
         i += 1 + data[i]
     i += 5
     for _ in range(ancount):
-        if i >= len(data): break
+        if i >= len(data):
+            break
         if data[i] & 0xC0 == 0xC0:
             i += 2
         else:
             while i < len(data) and data[i] != 0:
                 i += 1 + data[i]
             i += 1
-        if i + 10 > len(data): break
-        rtype, _, _, rdlen = struct.unpack("!HHIH", data[i:i+10])
+        if i + 10 > len(data):
+            break
+        rtype, _, _, rdlen = struct.unpack("!HHIH", data[i : i + 10])
         i += 10
-        rdata = data[i:i+rdlen]
+        rdata = data[i : i + rdlen]
         i += rdlen
         if rtype == 1 and rdlen == 4:
             return socket.inet_ntoa(rdata)
@@ -74,7 +80,9 @@ def _dns_query_a(name: str) -> str | None:
 
 
 def _patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-    host_str = host.decode("utf-8", errors="ignore") if isinstance(host, bytes) else (host if isinstance(host, str) else "")
+    host_str = (
+        host.decode("utf-8", errors="ignore") if isinstance(host, bytes) else (host if isinstance(host, str) else "")
+    )
     if host_str and _DNS_HOST and _belongs_to_zone(host_str):
         ip = _dns_query_a(host_str)
         if ip:
@@ -90,7 +98,8 @@ def _qname_text(qname) -> str:
 
 
 def _install_dnspython():
-    if not _DNS_HOST: return
+    if not _DNS_HOST:
+        return
     try:
         import dns.resolver
     except ImportError:
@@ -98,27 +107,34 @@ def _install_dnspython():
     if getattr(dns.resolver.resolve, "_kuadrant_coredns", False):
         return
     orig = dns.resolver.resolve
+
     def _coredns_resolver():
         r = dns.resolver.Resolver(configure=False)
-        r.nameservers = [_DNS_HOST]; r.port = _DNS_PORT
+        r.nameservers = [_DNS_HOST]
+        r.port = _DNS_PORT
         r.nameserver_ports = {_DNS_HOST: _DNS_PORT}
-        r.cache = None; r.lifetime = 5.0
+        r.cache = None
+        r.lifetime = 5.0
         return r
+
     def _resolve(qname, *args, **kwargs):
         if _belongs_to_zone(_qname_text(qname)):
             print(f"[coredns_resolve] dnspython {_qname_text(qname)} -> CoreDNS:{_DNS_PORT}", file=sys.stderr)
             return _coredns_resolver().resolve(qname, *args, **kwargs)
         return orig(qname, *args, **kwargs)
+
     _resolve._kuadrant_coredns = True
     dns.resolver.resolve = _resolve
     # ppc64le-fix(G6): parity with s390x CI – is_nxdomain() uses resolve_name(), which otherwise goes to
     # the bastion's caching named instead of CoreDNS.
     if hasattr(dns.resolver, "resolve_name"):
         orig_name = dns.resolver.resolve_name
+
         def _resolve_name(name, *args, **kwargs):
             if _belongs_to_zone(_qname_text(name)):
                 return _coredns_resolver().resolve_name(name, *args, **kwargs)
             return orig_name(name, *args, **kwargs)
+
         dns.resolver.resolve_name = _resolve_name
     print(f"[coredns_resolve] dnspython patched for *.{_ZONE} -> {_DNS_HOST}:{_DNS_PORT}", file=sys.stderr)
 
@@ -129,7 +145,10 @@ def install():
         print(f"[coredns_resolve] getaddrinfo patched for *.{_ZONE} -> {_DNS_HOST}:{_DNS_PORT}", file=sys.stderr)
         if _DNS_HOST:
             tip = _dns_query_a(f"probe.{_ZONE}")
-            print(f"[coredns_resolve] DNS probe: {'OK ('+tip+')' if tip else 'no answer (zone may be empty)'}", file=sys.stderr)
+            print(
+                f"[coredns_resolve] DNS probe: {'OK ('+tip+')' if tip else 'no answer (zone may be empty)'}",
+                file=sys.stderr,
+            )
         _install_dnspython()
 
 

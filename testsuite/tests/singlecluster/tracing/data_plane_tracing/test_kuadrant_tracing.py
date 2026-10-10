@@ -14,14 +14,13 @@ import pytest
 
 pytestmark = [pytest.mark.observability, pytest.mark.limitador, pytest.mark.authorino, pytest.mark.kuadrant_only]
 
-import os as _os_trace
-
 
 # ppc64le-fix: dataplane-trace-id — OCP Istio may omit x-request-id on response
 def _ppc64le_trace_headers():
-    rid = _os_trace.urandom(16).hex()
+    """Return (request_id, headers) with an explicit x-request-id and a random W3C traceparent."""
+    rid = os.urandom(16).hex()
     return rid, {
-        "Traceparent": f"00-{_os_trace.urandom(16).hex()}-{_os_trace.urandom(8).hex()}-01",
+        "Traceparent": f"00-{os.urandom(16).hex()}-{os.urandom(8).hex()}-01",
         "x-request-id": rid,
     }
 
@@ -56,7 +55,9 @@ def trace_200(trace_request_ids, tracing, has_ocp_managed_istio):
     """Fetches and caches the full kuadrant-filter trace for the 200 response."""
     request_id = trace_request_ids[0]
     min_procs = 3 if has_ocp_managed_istio else 4
-    traces = tracing.get_traces(service="wasm-shim", min_processes=min_procs, attributes={"request_id": request_id})
+    traces = tracing.get_traces(
+        service="kuadrant-filter", min_processes=min_procs, attributes={"request_id": request_id}
+    )
     assert len(traces) == 1, f"No trace was found in tracing backend with request_id: {request_id}"
     return traces[0]
 
@@ -66,7 +67,9 @@ def trace_429(trace_request_ids, tracing, has_ocp_managed_istio):
     """Fetches and caches the full kuadrant-filter trace for the 429 response."""
     request_id = trace_request_ids[1]
     min_procs = 3 if has_ocp_managed_istio else 4
-    traces = tracing.get_traces(service="wasm-shim", min_processes=min_procs, attributes={"request_id": request_id})
+    traces = tracing.get_traces(
+        service="kuadrant-filter", min_processes=min_procs, attributes={"request_id": request_id}
+    )
     assert len(traces) == 1, f"No trace was found in tracing backend with request_id: {request_id}"
     return traces[0]
 
@@ -80,7 +83,9 @@ def trace_401(client, tracing, has_ocp_managed_istio):
 
     request_id = response_401.headers.get("x-request-id") or _rid_401
     min_procs = 2 if has_ocp_managed_istio else 3
-    traces = tracing.get_traces(service="wasm-shim", min_processes=min_procs, attributes={"request_id": request_id})
+    traces = tracing.get_traces(
+        service="kuadrant-filter", min_processes=min_procs, attributes={"request_id": request_id}
+    )
     assert len(traces) == 1, f"No trace was found in tracing backend with request_id: {request_id}"
     return traces[0]
 

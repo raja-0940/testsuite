@@ -62,6 +62,7 @@ def test_identical_hostnames_rlp_on_gw_and_route(client, rate_limit, rate_limit2
     rate_limit2.wait_for_partial_enforced()
     # ppc64le-fix: rlp-gw-route-wait — CR enforced ≠ wasm dataplane ready; wait for 429 on route2
     import time as _t_rlp
+
     _rlp_deadline = _t_rlp.time() + 90
     while _t_rlp.time() < _rlp_deadline:
         _rs = [client.get("/anything/route2/get") for _ in range(3)]

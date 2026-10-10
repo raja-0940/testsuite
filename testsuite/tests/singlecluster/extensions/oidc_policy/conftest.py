@@ -103,6 +103,4 @@ def wait_for_oidc_dataplane(commit, client):  # pylint: disable=unused-argument
         except Exception:  # pylint: disable=broad-exception-caught
             return False
 
-    assert _wait(), (
-        f"Timed out after {OIDC_DATAPLANE_READY_TIMEOUT}s waiting for OIDC dataplane readiness"
-    )
+    assert _wait(), f"Timed out after {OIDC_DATAPLANE_READY_TIMEOUT}s waiting for OIDC dataplane readiness"

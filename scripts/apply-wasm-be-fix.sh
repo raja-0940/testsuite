@@ -32,7 +32,7 @@
 #   * podman logged in to quay.io (podman login quay.io)
 #   * Rust toolchain with wasm32-wasip1 target
 #       rustup target add wasm32-wasip1
-#   * protoc  (dnf install -y protobuf-compiler unzip)
+#   * protoc >= 3.15 (auto-downloaded for ppc64le into <wasm-src>/bin if missing), unzip, curl
 #   * python3
 #
 # USAGE
@@ -41,7 +41,7 @@
 #
 # OPTIONS
 #   --wasm-src  DIR     Path to wasm-shim git checkout.
-#                       Default: /root/wasm-shim
+#                       Default: /root/wasm-shim  (use a v0.15.0+ checkout for RHCL 1.5)
 #   --image-tag TAG     OCI image tag for the patched wasm binary.
 #                       Default: quay.io/raja0940/wasm-shim:ppc64le-be-fix
 #   --injector-tag TAG  OCI image tag for the init-container injector.
@@ -108,6 +108,7 @@ require_cmd oc
 require_cmd python3
 $SKIP_BUILD || require_cmd cargo
 $SKIP_BUILD || require_cmd rustup
+$SKIP_BUILD || require_cmd unzip
 $SKIP_PUSH  || require_cmd podman
 
 ARCH=$(uname -m)
@@ -229,20 +230,31 @@ else
       rustup target add wasm32-wasip1
     fi
 
-    # Replace any stale x86-64 protoc in the wasm-shim bin dir with the system one
-    SYS_PROTOC=$(command -v protoc 2>/dev/null || true)
-    if [[ -n "$SYS_PROTOC" ]]; then
-      BIN_DIR="${WASM_SRC}/bin"
-      mkdir -p "$BIN_DIR"
-      PROTO_IN_BIN="${BIN_DIR}/protoc"
-      if [[ -f "$PROTO_IN_BIN" ]]; then
-        PROTO_ARCH=$(file "$PROTO_IN_BIN" 2>/dev/null | grep -oE 'x86-64|ppc64|aarch64' || true)
-        if [[ "$PROTO_ARCH" == "x86-64" && "$ARCH" == "ppc64le" ]]; then
-          warn "Replacing x86-64 protoc in ${BIN_DIR} with system protoc."
-          ln -sf "$SYS_PROTOC" "$PROTO_IN_BIN"
-        fi
-      fi
+    # wasm-shim >= v0.15 needs protoc >= 3.15 (proto3 optional). The Makefile only downloads
+    # x86_64/osx protoc, and RHEL's protoc is 3.14, so put a ppc64le protoc (PROTOC_VERSION,
+    # default 21.1 = Makefile pin) into ${WASM_SRC}/bin when the existing one is missing/too old/wrong arch.
+    BIN_DIR="${WASM_SRC}/bin"
+    PROTO_IN_BIN="${BIN_DIR}/protoc"
+    PROTOC_VERSION="${PROTOC_VERSION:-21.1}"
+    PROTO_OK=false
+    if [[ -x "$PROTO_IN_BIN" ]] && "$PROTO_IN_BIN" --version >/dev/null 2>&1; then
+      PV=$("$PROTO_IN_BIN" --version | awk '{print $2}')
+      [[ "$(printf '%s\n3.15.0\n' "$PV" | sort -V | head -1)" == "3.15.0" ]] && PROTO_OK=true
     fi
+    if ! $PROTO_OK && [[ "$ARCH" == "ppc64le" ]]; then
+      info "Installing protoc ${PROTOC_VERSION} (linux-ppcle_64) into ${BIN_DIR}"
+      TMP_PROTOC=$(mktemp -d)
+      curl -sSfL -o "${TMP_PROTOC}/protoc.zip" \
+        "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-ppcle_64.zip" \
+        || die "Failed to download protoc ${PROTOC_VERSION} for ppc64le"
+      unzip -q -o "${TMP_PROTOC}/protoc.zip" -d "$TMP_PROTOC"
+      mkdir -p "$BIN_DIR" "${WASM_SRC}/include"
+      rm -f "$PROTO_IN_BIN"
+      cp "${TMP_PROTOC}/bin/protoc" "$PROTO_IN_BIN"
+      cp -r "${TMP_PROTOC}/include/." "${WASM_SRC}/include/"
+      rm -rf "$TMP_PROTOC"
+    fi
+    ok "protoc: $("$PROTO_IN_BIN" --version 2>/dev/null || echo missing)"
 
     info "Running: BUILD=release make build  (this takes ~15s on ppc64le)"
     (cd "$WASM_SRC" && BUILD=release make build 2>&1)

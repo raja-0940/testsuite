@@ -25,4 +25,3 @@ def authorization(authorization):
     """Adds `aut.metadata` to the AuthJson"""
     authorization.responses.add_simple("auth.metadata")
     return authorization
-

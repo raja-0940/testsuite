@@ -269,15 +269,17 @@ if [[ -z "$CURRENT_TOKEN" ]]; then
     log "WARNING: Could not get current OCP token — settings.local.yaml token may be stale" >&2
 else
     # Replace any existing sha256~... token under the cluster section
-    OLD_TOKEN="$(grep '      token: sha256~' "$SETTINGS_FILE" | awk '{print $2}' | head -1 || true)"
+    OLD_TOKEN="$(yq '.default.control_plane.cluster.token // ""' "$SETTINGS_FILE")"
     if [[ -n "$OLD_TOKEN" && "$OLD_TOKEN" != "$CURRENT_TOKEN" ]]; then
-        sed -i "s|token: ${OLD_TOKEN}|token: ${CURRENT_TOKEN}|" "$SETTINGS_FILE"
-        ok "Updated cluster token in settings.local.yaml (${OLD_TOKEN:0:20}... -> ${CURRENT_TOKEN:0:20}...)"
+        CURRENT_TOKEN="$CURRENT_TOKEN" yq -i '.default.control_plane.cluster.token = strenv(CURRENT_TOKEN)' "$SETTINGS_FILE"
+        ok "Updated cluster token in settings.local.yaml"
     elif [[ "$OLD_TOKEN" == "$CURRENT_TOKEN" ]]; then
         ok "Cluster token in settings.local.yaml is already current"
     else
-        # Token not found in file - add it
-        log "WARNING: No cluster token found in settings.local.yaml to update" >&2
+        # No token in settings (e.g. kubeconfig uses client certificates). The testsuite needs
+        # cluster.token for bearer-auth clients such as Prometheus/Thanos (metrics tests).
+        CURRENT_TOKEN="$CURRENT_TOKEN" yq -i '.default.control_plane.cluster.token = strenv(CURRENT_TOKEN)' "$SETTINGS_FILE"
+        ok "Added cluster token to settings.local.yaml (control_plane.cluster.token)"
     fi
 fi
 
@@ -447,6 +449,7 @@ if [[ -f "$DNS_HELPER_PID_FILE" ]]; then
             log "Killing existing DNS helper (pid=$OLD_PID, RESET_DNS=1)"
             kill "$OLD_PID" 2>/dev/null || true
             sleep 1
+            rm -f "$DNS_HELPER_PID_FILE"
         else
             ok "DNS helper already running (pid=$OLD_PID) — reusing"
             DNS_HELPER_PID="$OLD_PID"
@@ -501,13 +504,24 @@ fi
 
 # ─── 15. Write environment file ───────────────────────────────────────────────
 log "=== 15. Writing environment file ==="
+# DNS port used by the pytest resolver plugin for *.<zone>. Prefer the kuadrant-coredns NodePort
+# (setup-kuadrant-coredns.sh; serves DNSRecord CRs, required by dnspolicy/listener/retarget tests),
+# fall back to the etcd CoreDNS NodePort. Override with TEST_DNS_PORT.
+KUADRANT_COREDNS_NS="${KUADRANT_COREDNS_NS:-kuadrant-coredns}"
+TEST_DNS_PORT="${TEST_DNS_PORT:-$(oc get svc kuadrant-coredns -n "$KUADRANT_COREDNS_NS" \
+    -o jsonpath='{.spec.ports[?(@.protocol=="UDP")].nodePort}' 2>/dev/null || true)}"
+if [[ -z "$TEST_DNS_PORT" ]]; then
+    log "WARNING: kuadrant-coredns NodePort not found in ${KUADRANT_COREDNS_NS} - falling back to etcd CoreDNS ${COREDNS_NODEPORT} (DNSRecord-based tests will fail; run setup-kuadrant-coredns.sh)" >&2
+    TEST_DNS_PORT="$COREDNS_NODEPORT"
+fi
+ok "Test DNS resolver port: ${TEST_DNS_PORT}"
 cat > "$ENV_FILE" <<EOF
 # Kuadrant PPC64LE E2E environment — generated $(date --iso-8601=seconds)
 # source this file before running pytest
 
 export KUADRANT_COREDNS_ZONE="${DNS_ZONE}"
 export KUADRANT_COREDNS_DNS_HOST="${NODE_IP}"
-export KUADRANT_COREDNS_DNS_PORT="${COREDNS_NODEPORT}"
+export KUADRANT_COREDNS_DNS_PORT="${TEST_DNS_PORT}"
 
 # Timeouts for dataplane readiness polling
 export AUTH_DATAPLANE_READY_TIMEOUT=120
@@ -532,10 +546,11 @@ log "=== Pre-E2E preparation COMPLETE ==="
 log ""
 log "  DNS zone          : ${DNS_ZONE}"
 log "  CoreDNS NodePort  : ${NODE_IP}:${COREDNS_NODEPORT}  (bastion-reachable)"
+log "  Test DNS port     : ${NODE_IP}:${TEST_DNS_PORT}  (KUADRANT_COREDNS_DNS_PORT)"
 log "  CoreDNS ClusterIP : ${COREDNS_CLUSTERIP}:5353       (in-cluster)"
 log "  kuadrant-coredns  : ${KUADRANT_COREDNS_IP}:53       (in-cluster delegation)"
 log "  etcd              : ${ETCD_SVC_IP}:2379"
-log "  DNS helper PID    : $(cat ${DNS_HELPER_PID_FILE} 2>/dev/null || echo unknown)"
+log "  DNS helper PID    : $(cat "${DNS_HELPER_PID_FILE}" 2>/dev/null || echo unknown)"
 log "  DNS helper log    : ${DNS_HELPER_LOG}"
 log "  Env file          : ${ENV_FILE}"
 log ""

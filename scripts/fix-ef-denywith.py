@@ -13,6 +13,7 @@ fails open (every request returns HTTP 200 instead of 429 after limit is hit).
 
 Run in the background: nohup python3 scripts/fix-ef-denywith.py &> /tmp/ef-fix-daemon.log &
 """
+
 import json
 import os
 import re
@@ -21,7 +22,7 @@ import sys
 import time
 
 POLL_INTERVAL = 1  # seconds between checks
-BROKEN_SUFFIX = '\\n"!}'   # backslash + n + " + ! + }   as Python str
+BROKEN_SUFFIX = '\\n"!}'  # backslash + n + " + ! + }   as Python str
 
 
 def run(*args, **kwargs):
@@ -36,10 +37,7 @@ def fix_ef_json(ef_json_str):
 
     for p in patches_list:
         try:
-            cfg_section = (
-                p["patch"]["value"]["typed_config"]["value"]
-                ["config"]["configuration"]
-            )
+            cfg_section = p["patch"]["value"]["typed_config"]["value"]["config"]["configuration"]
         except (KeyError, TypeError):
             continue
         cfg_val = cfg_section.get("value", "")
@@ -63,8 +61,7 @@ def fix_ef_json(ef_json_str):
                         reply["denyWith"] = new_dw
                         changed = True
                         print(
-                            f"[ef-fix] fixed denyWith in {ef['metadata']['namespace']}/"
-                            f"{ef['metadata']['name']}",
+                            f"[ef-fix] fixed denyWith in {ef['metadata']['namespace']}/" f"{ef['metadata']['name']}",
                             flush=True,
                         )
                     elif '"Too Many' not in dw:
@@ -98,10 +95,15 @@ def apply_ef(ef):
     # Get just the configPatches we need to patch
     patch_body = json.dumps({"spec": ef["spec"]})
     r = run(
-        "oc", "patch", "envoyfilter", name,
-        "-n", ns,
+        "oc",
+        "patch",
+        "envoyfilter",
+        name,
+        "-n",
+        ns,
         "--type=merge",
-        "-p", patch_body,
+        "-p",
+        patch_body,
     )
     if r.returncode == 0:
         print(f"[ef-fix] patched {ns}/{name} OK", flush=True)
@@ -113,9 +115,7 @@ def apply_ef(ef):
 
 def check_and_fix_all():
     """Find all broken Kuadrant wasm EnvoyFilters and fix them."""
-    r = run("oc", "get", "envoyfilter", "-A",
-            "-l", "kuadrant.io/wasm=true",
-            "-o", "json")
+    r = run("oc", "get", "envoyfilter", "-A", "-l", "kuadrant.io/wasm=true", "-o", "json")
     if r.returncode != 0:
         print(f"[ef-fix] list error: {r.stderr[:100]}", flush=True)
         return 0

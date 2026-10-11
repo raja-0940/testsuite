@@ -1,63 +1,133 @@
-# Kuadrant e2e on ppc64le — helper scripts
+# Kuadrant E2E Automation for IBM Power (ppc64le)
 
-These scripts prepare an OpenShift ppc64le cluster with RHCL (Kuadrant) 1.5 and run the
-Kuadrant e2e testsuite from this repository. They contain only the steps needed to run
-the e2e tests. Run all commands from the repository root (`testsuite/`) on the bastion.
+This directory contains the automation tooling and modular helper scripts for preparing an OpenShift `ppc64le` cluster with Red Hat Connectivity Link (RHCL / Kuadrant 1.5) and executing the complete or targeted Kuadrant E2E test suite.
 
-| Script | When | Purpose |
-|---|---|---|
-| `apply-wasm-be-fix.sh` | once per operator install | Legacy/optional: builds/injects a patched wasm-shim (log-level hostcall removed). ppc64le is little-endian; the official RHCL 1.5.0 ppc64le wasm-shim loaded and enforced RLP on OCP 4.22 without it |
-| `setup-egress-vault-authorino.sh` | once | Vault Kubernetes auth + Authorino cluster trust bundle (needed by `egress` tests) |
-| `setup-operator-tracing.sh` | once | `OTEL_*` env on the RHCL operator Subscription (needed by `tracing/control_plane` tests) |
-| `setup-dataplane-observability.sh` | once | `spec.observability.dataPlane` on the Kuadrant CR (needed by `tracing/data_plane_tracing` tests) |
-| `setup-kuadrant-coredns.sh` | once | Deploys `coredns-kuadrant` (reads DNSRecords) on NodePort 30554 (needed by `gateway/*` DNSPolicy tests); `kuadrant-pre-e2e.sh` writes this port into the env file |
-| `kuadrant-pre-e2e.sh` | before every run | Validates the cluster/tools, creates namespaces/services/secrets, updates DNS fields + OCP token in `config/settings.local.yaml`, starts the DNS helper daemon below, writes the env file |
-| `sync-kuadrant-dns-etcd.sh` | daemon (started by pre-e2e) | Syncs HTTPRoute hostnames into etcd so `*.kuadrant.internal` resolves from the bastion |
-| `run-kuadrant-e2e.sh` | run | Runs the full suite or selected tests/groups with the standard options |
-| `run-full-e2e-power.sh` | run | Full suite with the Power workarounds: preflight checks, kuadrant-coredns NodePort (discovered, `COREDNS_PORT_OVERRIDE` wins), timestamped dir with `full-e2e.log`, junit, html, `summary.txt`, `failures.txt` |
+All operations can be driven through the master entry point script: **`scripts/automate-kuadrant-e2e.sh`**.
 
-## 1. Prerequisites
+---
 
-### Cluster
-- OpenShift 4.x on ppc64le, logged in as cluster-admin (`oc whoami` works, `KUBECONFIG` set).
-- Operators installed with CSV `Succeeded`:
-  - Red Hat Connectivity Link `rhcl-operator.v1.5.0` (namespace `openshift-operators`)
-  - OpenShift Service Mesh 3 (`servicemeshoperator3`) — Gateway API provider
-  - cert-manager, with a ClusterIssuer (e.g. `kuadrant-qe-issuer`)
-  - MetalLB with an `IPAddressPool` for Gateway `LoadBalancer` services. Make sure the pool has enough free IPs
-    (each test module creates a gateway).
-- `Kuadrant` CR `kuadrant` in `kuadrant-system` is `Ready`. For tracing tests, `spec.observability.tracing` points to
-  the Jaeger collector.
-- Test namespaces `kuadrant` and `kuadrant2` (created by `kuadrant-pre-e2e.sh` if missing).
-- `tools` namespace with the testsuite tools, all ppc64le images, and Routes for keycloak, mockserver, vault
-  and jaeger-query:
-  `etcd`, `coredns` (etcd backend, zone `kuadrant.internal`, port 5353), `keycloak`, `mockserver`, `vault` (dev mode),
-  `jaeger`.
+## 1. Quick Start & Shortest Verified Commands
 
-### Bastion tools
-`oc`, `kubectl`, `helm`, `yq` (v4), `jq`, `dig`, `curl`, `tmux`, `cfssl`, `python3` (3.11+), `poetry` (2.x), `git`.
+Run all commands from the repository root (`/root/test/testsuite`) on the bastion host.
 
-Only for `apply-wasm-be-fix.sh`: `podman` (logged in to the target registry, e.g. `podman login quay.io`),
-Rust with the `wasm32-wasip1` target (`rustup target add wasm32-wasip1`), `protoc`
-(>= 3.15; auto-downloaded into `<wasm-src>/bin` if missing/older, needs `unzip` + `curl`), and a wasm-shim checkout
-(`WASM_SRC`, default `/root/wasm-shim`).
-
-> RHCL 1.5 needs wasm-shim **v0.15.0** or later: token reservation (Reserve/Commit), `responseBodyJSON`,
-> streaming TRLP and case-insensitive hostnames are missing in older builds (all `tokens_rate_limit/reservation`
-> and `test_hostname_case` tests fail with 200 instead of 401/429, streaming tests time out). Use a clean tag checkout:
-> `git -C /root/wasm-shim worktree add /root/wasm-shim-v0.15.0 v0.15.0`, then `--wasm-src /root/wasm-shim-v0.15.0`.
-> v0.15.0 reports dataplane traces to Jaeger as service `kuadrant-filter` (what upstream tests expect).
-
-## 2. Testsuite setup
-
+### Check Prerequisites (Non-Mutating)
+Inspects bastion tools, cluster health, operators, Kuadrant CR, Authorino/Limitador, mock tools endpoints, DNS delegation, and local configuration without applying changes:
 ```bash
-git clone <this repo> testsuite && cd testsuite
-make poetry-no-dev          # creates the poetry venv (python 3.11) and installs dependencies
-poetry run python -c "import testsuite"   # sanity check
+./scripts/automate-kuadrant-e2e.sh --check
 ```
 
-Create `config/settings.local.yaml`. Keep secrets out of git; the file is ignored. Minimal content used on ppc64le:
+### Full Setup & Test Execution (One Command)
+Validates preflight, applies all missing prerequisites in dependency order, refreshes local tokens, starts the background DNS helper daemon, and launches the full Kuadrant E2E suite in a dedicated tmux session:
+```bash
+./scripts/automate-kuadrant-e2e.sh --test
+```
 
+### Setup Prerequisites Only (Idempotent)
+Prepares all cluster namespaces, Vault kubernetes auth, Authorino trust bundles, operator OTEL tracing, Kuadrant dataPlane observability, Istio telemetry, and CoreDNS NodePort without running pytest:
+```bash
+./scripts/automate-kuadrant-e2e.sh --setup
+```
+
+### Run Selected Tests or Groups
+Runs specific test modules or test files through the automated pipeline in tmux:
+```bash
+# Run Authorino basic tests
+./scripts/automate-kuadrant-e2e.sh --test testsuite/tests/singlecluster/authorino/test_basic.py
+
+# Run DNSPolicy suite
+./scripts/automate-kuadrant-e2e.sh --test testsuite/tests/singlecluster/gateway/dnspolicy
+
+# Run Limitador suite
+./scripts/automate-kuadrant-e2e.sh --test testsuite/tests/singlecluster/limitador
+```
+
+### Inspect Active Execution & Logs
+```bash
+# Check status of tmux sessions, pytest processes, DNS helper daemon, and latest results
+./scripts/automate-kuadrant-e2e.sh --status
+
+# Attach to the live tmux test console (detach with Ctrl-b d)
+tmux attach -t kuadrant-power-full-e2e
+
+# Stream live pytest logs from the latest run
+tail -n 100 -f $(cat /root/test/results/LATEST_FULL_RUN.txt 2>/dev/null || ls -td /root/test/results/full-e2e-* | head -1)/full-e2e.log
+```
+
+### Scoped Cleanup
+Stops helper daemons and deletes leftover test objects (Gateways, HTTPRoutes, Policies, Secrets, Services, Deployments created by the test user) without affecting persistent operators, cluster issuers, or tools:
+```bash
+./scripts/automate-kuadrant-e2e.sh --clean
+```
+
+---
+
+## 2. Scripts Reference
+
+| Script | Purpose |
+|---|---|
+| **`automate-kuadrant-e2e.sh`** | **Master automation entry point.** Provides `--check`, `--setup`, `--test`, `--status`, `--clean`, `--no-tmux`, `--with-wasm-workaround`, and `--results-dir`. Coordinates all sub-scripts in strict dependency order. |
+| `kuadrant-pre-e2e.sh` | Validates tools/cluster, creates namespaces, provisions `coredns-credentials`, refreshes OCP token in `config/settings.local.yaml`, performs synthetic DNS checks, starts `sync-kuadrant-dns-etcd.sh`, and writes the environment file (`/tmp/kuadrant-ppc64le-e2e-env.sh`). |
+| `run-full-e2e-power.sh` | Wrapper around `run-kuadrant-e2e.sh` executing preflight checks, timestamped logging outside the repo (`/root/test/results/full-e2e-<ts>/`), environment capture, JUnit XML, HTML reports, and post-test `summary.txt` / `failures.txt` extraction. |
+| `run-kuadrant-e2e.sh` | Standard Pytest runner using Poetry with established Power flags (`-n0`, `--reruns 3`, `--reruns-delay 2`, `--verify-denials=true`, `--enforce`, `-m "not standalone_only and not disruptive and not ui"`). |
+| `setup-egress-vault-authorino.sh` | Sets up Vault ServiceAccount `vault`, ClusterRoleBinding `kuadrant-vault-auth-delegator`, writes `auth/kubernetes/config`, creates `authorino-cluster-trust-ca-bundle` ConfigMap in `kuadrant-system`, and mounts it into Authorino CR. |
+| `setup-operator-tracing.sh` | Patches RHCL Subscription with `OTEL_EXPORTER_OTLP_ENDPOINT` pointing to `rpc://jaeger-collector.tools.svc.cluster.local:4317` and restarts operator controller manager. |
+| `setup-dataplane-observability.sh` | Patches Kuadrant CR `kuadrant` with `spec.observability.dataPlane.httpHeaderIdentifier: x-request-id` and tracing configuration. |
+| `setup-kuadrant-coredns.sh` | Deploys CoreDNS with Kuadrant DNSRecord plugin in `kuadrant-coredns` namespace with NodePort `30554` (for DNSPolicy test resolution). |
+| `sync-kuadrant-dns-etcd.sh` | Background daemon polling HTTPRoutes and synchronizing hostnames to SkyDNS etcd keys for bastion resolution of `*.kuadrant.internal`. |
+| `apply-wasm-be-fix.sh` | Optional/legacy workaround: rebuilds/injects patched wasm-shim without log-level hostcall. (Standard setup uses official binary). |
+
+---
+
+## 3. Prerequisite Inventory & Dependency Classification
+
+### Mandatory Prerequisites (Automated or Validated)
+1. **Cluster & Architecture**: OpenShift 4.22+ on `ppc64le` with all Master and Worker nodes in `Ready` state.
+2. **Cluster Permissions**: Logged in as `cluster-admin` (e.g. `kube:admin`).
+3. **Required Operators (CSV Succeeded)**:
+   - Red Hat Connectivity Link: `rhcl-operator.v1.5.0` (namespace `openshift-operators`)
+   - OpenShift Service Mesh 3: `servicemeshoperator3.v3.4.3` (Sail Operator)
+   - cert-manager: `cert-manager-operator.v1.20.1` (ClusterIssuer `kuadrant-qe-issuer`)
+   - MetalLB: `metallb-operator` with `IPAddressPool` named `gateway-pool` allocating IPs for Gateways.
+4. **Core Kuadrant Components**:
+   - Kuadrant CR `kuadrant` in namespace `kuadrant-system` (Condition `Ready=True`).
+   - Authorino deployment ready in `kuadrant-system`.
+   - Limitador deployment ready in `kuadrant-system`.
+   - GatewayClass `istio` accepted and ready.
+5. **Namespaces**: `tools`, `kuadrant`, `kuadrant2`, `kuadrant-coredns`.
+6. **Tools Deployments & Routes (in `tools` namespace)**:
+   - `etcd` (ClusterIP `172.30.217.225:2379`)
+   - `coredns` (NodePort `30553`, SkyDNS backend for `*.kuadrant.internal`)
+   - `keycloak` (Route `http://keycloak-tools.apps.<domain>`)
+   - `mockserver` (Route `http://mockserver-tools.apps.<domain>`)
+   - `jaeger` (Query route `http://jaeger-query-tools.apps.<domain>`, OTLP gRPC `jaeger-collector.tools.svc.cluster.local:4317`)
+   - `vault` (Route `http://vault-tools.apps.<domain>`, dev mode with root token)
+7. **Secrets & Integration RBAC**:
+   - `coredns-credentials` Secret in namespaces `kuadrant` and `kuadrant2`.
+   - Vault `kuadrant-vault-auth-delegator` ClusterRoleBinding for token reviews.
+   - Authorino `cluster-trust-bundle` ConfigMap containing cluster Ingress CA.
+8. **DNS Resolution Pipeline**:
+   - `kuadrant-coredns` deployed on NodePort `30554` (resolving DNSRecord CRs).
+   - `sync-kuadrant-dns-etcd.sh` background daemon active.
+
+### Optional Prerequisites & Additional Coverage
+- **Thanos Querier Token**: Needed for metrics observability tests (`testsuite/tests/singlecluster/observability`). Refreshed automatically from `oc whoami -t`.
+- **UI Console Plugin**: Required only for UI tests (which are ignored in default CLI E2E runs).
+
+### Temporary Workarounds & Product Adaptations
+- **Wasm Shim Binary**: ppc64le is little-endian; standard RHCL 1.5.0 binary works without modifications. Optional custom builds can be enabled with `--with-wasm-workaround`.
+- **Egress Authorino CA Bundle**: Ingress CA bundle mounted into Authorino container to validate self-signed certificates when calling internal routes.
+- **Velocity MockServer Templates**: Velocity templates used for MockServer responses where JavaScript (Nashorn) engine is unavailable on ppc64le JVM builds.
+
+---
+
+## 4. Configuration & Secure Credential Handling
+
+Configuration is managed via `config/settings.local.yaml`.
+- The automation secures permissions on this file (`chmod 0600`) to prevent unauthorized access.
+- Sensitive credentials (Vault root token, Keycloak passwords, OCP bearer tokens) are stored only in this ignored file or existing Kubernetes Secrets.
+- Pre-E2E setup automatically refreshes `control_plane.cluster.token` by querying `oc whoami --show-token` without printing or logging secrets.
+
+Sample snippet of `config/settings.local.yaml`:
 ```yaml
 default:
   cfssl: /usr/local/bin/cfssl
@@ -67,14 +137,14 @@ default:
     project: openshift-monitoring
     service: thanos-querier
   service_protection:
-    system_project: kuadrant-system      # namespace of the Kuadrant CR / Authorino / Limitador
-    operator_project: openshift-operators # namespace of kuadrant-operator-controller-manager (OLM)
+    system_project: kuadrant-system
+    operator_project: openshift-operators
     project: kuadrant
     project2: kuadrant2
   control_plane:
     cluster:
-      kubeconfig_path: <path to kubeconfig>
-      token: <OCP bearer token; written by kuadrant-pre-e2e.sh step 9b>
+      kubeconfig_path: /root/.kube/config
+      token: "<refreshed-automatically>"
     slow_loadbalancers: true
     provider_secret: coredns-credentials
     issuer:
@@ -84,161 +154,84 @@ default:
     coredns_zone: kuadrant.internal
     dns_server:
       geo_code: DE
-      address: <updated by kuadrant-pre-e2e.sh>
-    default_geo_server: <updated by kuadrant-pre-e2e.sh>
+      address: 172.30.250.50
   tools:
     project: tools
   keycloak:
     url: http://keycloak-tools.apps.<cluster-domain>
     username: admin
-    password: <keycloak admin password>
-    test_user:
-      username: testUser
-      password: <test user password>
-  mockserver:
-    url: http://mockserver-tools.apps.<cluster-domain>
-    image: quay.io/pbastide_rh/mockserver-ppc64le:f572b831a14d0b3027d4f6164d60051fe8e2b6f7
-  tracing:
-    backend: jaeger
-    collector_url: rpc://jaeger-collector.tools.svc.cluster.local:4317
-    query_url: http://jaeger-query-tools.apps.<cluster-domain>
-  vault:
-    url: http://vault-tools.apps.<cluster-domain>
-    token: <vault root token>
-  llm_sim:
-    image: quay.io/raja0940/llm-d-inference-sim-ppc64le:v091-fixed
-  grpcbin:
-    image: quay.io/raja0940/grpcbin:ppc64le-rc3-tls
-  spicedb:
-    image: quay.io/pbastide_rh/spicedb-ppc64le:latest
-  pipeline_policy_extension_service:
-    image: quay.io/raja-0940/threat-assessment-service:latest
+    password: <keycloak-password>
 ```
 
-> `system_project` must be `kuadrant-system`, not `openshift-operators`. With the wrong value, most Authorino and
-> Limitador tests fail.
->
-> `control_plane.cluster.token` is required when the kubeconfig uses client certificates (e.g. installer kubeconfig):
-> the Prometheus fixture sends `Bearer <token>`, and an empty token fails all metrics tests with
-> `Illegal header value b'Bearer '`. `kuadrant-pre-e2e.sh` refreshes it from `oc whoami --show-token`.
-> `kube:admin` OAuth tokens expire after 24 h; an expired token gives `401 Unauthorized` from thanos-querier in metrics
-> test setup. Re-run `kuadrant-pre-e2e.sh` (or step 9b) before metrics groups on long sessions.
+---
 
-## 3. One-time environment setup
+## 5. CLI Options for `automate-kuadrant-e2e.sh`
 
-Run these once after RHCL is installed (all are idempotent):
+```
+Usage:
+  ./scripts/automate-kuadrant-e2e.sh [MODE] [OPTIONS] [PYTEST_TARGETS...]
 
-```bash
-./scripts/apply-wasm-be-fix.sh                # add --skip-build --skip-push if the images already exist
-./scripts/setup-egress-vault-authorino.sh
-./scripts/setup-operator-tracing.sh
-./scripts/setup-dataplane-observability.sh   # revert: --revert
-make configure-istio-tracing TOOLS_NAMESPACE=tools   # upstream target: Istio meshConfig jaeger-otlp + Telemetry
-./scripts/setup-kuadrant-coredns.sh
+Modes (one required):
+  -c, --check                 Run non-mutating diagnostic checks on all prerequisites.
+  -s, --setup                 Apply and reconcile all prerequisites in dependency order.
+  -t, --test [TARGETS...]     Run setup + execute E2E test suite (full or selected paths).
+      --status                Show active tmux sessions, pytest processes, and latest runs.
+      --clean                 Run scoped cleanup of test gateways, routes, and daemons.
+  -h, --help                  Show help text and exit.
+
+Options:
+      --no-tmux               Run E2E directly in foreground instead of a tmux session.
+      --with-wasm-workaround  Apply custom/patched wasm-shim binary (opt-in workaround).
+      --kubeconfig <path>     Explicit path to kubeconfig (default: $KUBECONFIG or ~/.kube/config).
+      --results-dir <dir>     Parent directory for test output (default: /root/test/results).
 ```
 
-`apply-wasm-be-fix.sh` options: `--wasm-src DIR`, `--image-tag TAG`, `--injector-tag TAG`, `--op-ns NS`, `--dry-run`.
-You can set the same values through the env vars `WASM_SRC`, `IMAGE_TAG`, `INJECTOR_TAG` and `OPERATOR_NS`.
-Re-run it after the operator is reinstalled or upgraded.
+---
 
-`tracing/data_plane_tracing` needs all three tracing pieces: `setup-dataplane-observability.sh` (wasm spans with
-`request_id`), wasm-shim >= 0.15 (service `kuadrant-filter`), and `make configure-istio-tracing`. With the `istio`
-GatewayClass, the tests expect the gateway's own Envoy spans (4 processes). Revert the Istio part with
-`oc delete telemetry -n istio-system default-telemetry` and by removing `enableTracing`/`extensionProviders` from
-`Istio/default` `spec.values.meshConfig`.
+## 6. Execution Lifecycle, Output Artifacts, and Monitoring
 
-To swap only the injector image (wasm already built/pushed), patch the CSV init container and verify the served binary:
+When executed in test mode (`--test`), the automation creates a timestamped results directory outside the source tree at `/root/test/results/full-e2e-<YYYYMMDD-HHMMSS>/`.
 
+### Artifacts Generated:
+- `full-e2e.log` / `group-e2e-<ts>.log`: Complete live unbuffered execution log.
+- `junit-full-e2e.xml`: Standard JUnit test report for CI/CD integration.
+- `report-full-e2e.html`: Self-contained interactive HTML test report.
+- `environment.txt`: Snapshot of cluster version, nodes, CSV versions, wasm sha, and preflight status.
+- `exit-code.txt`: Exit code of the pytest execution.
+- `summary.txt`: Parsed pass/fail/error/skip/rerun breakdown and duration summary.
+- `failures.txt`: Extracted test IDs and truncated failure messages for failed test cases.
+
+### Monitoring Commands:
 ```bash
-oc get csv rhcl-operator.v1.5.0 -n openshift-operators -o json > csv-backup.json   # rollback: restore the old image the same way
-oc patch csv rhcl-operator.v1.5.0 -n openshift-operators --type json -p \
-  '[{"op":"replace","path":"/spec/install/spec/deployments/0/spec/template/spec/initContainers/0/image","value":"<injector@sha256:...>"}]'
-oc exec -n openshift-operators deploy/kuadrant-operator-controller-manager -c manager -- sha256sum /wasm/plugin.wasm
-```
+# Attach to tmux session:
+tmux attach -t kuadrant-power-full-e2e
 
-## 4. Before every run
-
-```bash
-./scripts/kuadrant-pre-e2e.sh
-```
-
-It writes `/tmp/kuadrant-ppc64le-e2e-env.sh` (override with `ENV_FILE`). `KUADRANT_COREDNS_DNS_PORT` in that file is the
-NodePort of Service `kuadrant-coredns/kuadrant-coredns` (DNSRecord-backed, normally 30554); if that Service is missing it
-falls back to the etcd CoreDNS NodePort 30553 with a warning (DNSPolicy tests then fail). Override with `TEST_DNS_PORT`.
-It also starts the DNS sync daemon (pid in `/tmp/kuadrant-ppc64le-dns-helper.pid`, log in
-`/tmp/kuadrant-ppc64le-dns-helper.log`). Re-running the script reuses it; set `RESET_DNS=1` to restart it.
-
-## 5. Running the tests
-
-The full run takes several hours, so use tmux. Recommended (preflight + kuadrant-coredns + reports):
-
-```bash
-tmux new -d -s kuadrant-power-full-e2e "cd /root/test/testsuite && ./scripts/run-full-e2e-power.sh; exec bash"
-tmux attach -t kuadrant-power-full-e2e            # detach: Ctrl-b d
+# View live log output:
 tail -n 100 -f /root/test/results/full-e2e-<ts>/full-e2e.log
+
+# Check run summary upon completion:
+cat /root/test/results/full-e2e-<ts>/summary.txt
 ```
 
-`run-full-e2e-power.sh` refuses to start (exit 2) if a preflight check fails: another pytest is running, nodes/COs
-unhealthy, RHCL CSV, served wasm sha (`EXPECTED_WASM_SHA`, default patched v0.15.0 `41e298e2`; set it to the official wasm sha if the official image is used), Kuadrant CR dataPlane,
-Istio tracing, both helper daemons, kuadrant-coredns NodePort, MetalLB pool, tools pods, settings token (checked with
-`oc whoami`, never printed). Output goes to `RESULTS_ROOT/full-e2e-<ts>/` (default `/root/test/results`):
-`full-e2e.log`, `junit-full-e2e.xml`, `report-full-e2e.html`, `exit-code.txt`, `environment.txt`, `summary.txt`,
-`failures.txt`. It sets `COREDNS_PORT_OVERRIDE` to the kuadrant-coredns NodePort (30554 if it cannot be discovered): only
-`gateway/*` tests use `*.kuadrant.internal` and they all create a DNSPolicy, which kuadrant-coredns serves directly.
+---
 
-Before a full run, delete leftover test resources from interrupted runs (they hold MetalLB IPs):
-`oc get gateway,httproute,authpolicy,ratelimitpolicy,tokenratelimitpolicy -n kuadrant` and delete objects labelled
-`testrun-root--*` that no running test owns (save them with `-o yaml` first).
+## 7. Troubleshooting & Rollback
 
-Plain runner (no preflight):
+### Common Scenarios & Resolutions
 
-```bash
-tmux new -s kuadrant-e2e './scripts/run-kuadrant-e2e.sh'
-```
+1. **Another Pytest Process Detected**:
+   - Check with `./scripts/automate-kuadrant-e2e.sh --status`.
+   - Terminate hanging or stale pytest jobs: `pkill -f pytest`.
 
-Run only selected tests or a failed group (same options as the full run):
+2. **Expired OCP Token in `settings.local.yaml`**:
+   - `kube:admin` tokens expire after 24 hours.
+   - Run `./scripts/automate-kuadrant-e2e.sh --setup` or `kuadrant-pre-e2e.sh` to refresh the token from `oc whoami -t`.
 
-```bash
-RUN_NAME=limitador ./scripts/run-kuadrant-e2e.sh testsuite/tests/singlecluster/limitador
-RUN_NAME=egress    ./scripts/run-kuadrant-e2e.sh testsuite/tests/singlecluster/egress
-# dnspolicy tests resolve through kuadrant-coredns (port taken from the env file; COREDNS_PORT_OVERRIDE overrides it):
-RUN_NAME=dnspolicy ./scripts/run-kuadrant-e2e.sh testsuite/tests/singlecluster/gateway/dnspolicy
-```
+3. **MetalLB IP Address Pool Exhaustion**:
+   - Interrupted test runs may leave behind Gateway LoadBalancer services.
+   - Run `./scripts/automate-kuadrant-e2e.sh --clean` to remove orphaned test resources and free IP addresses.
 
-The runner uses these pytest options:
-- `--reruns 3 --verify-denials=true --enforce -n0`
-- `-m "not standalone_only and not disruptive and not ui"`
-- `ui/` and `observability/` are ignored
-
-Results go to `RESULTS_DIR` (default `~/kuadrant-e2e-results`) as `<name>-e2e-<ts>.log`, `junit-<name>-<ts>.xml` and
-`report-<name>-<ts>.html` (override the paths with `LOG_FILE`, `JUNIT_FILE`, `HTML_FILE`).
-
-## 6. After the run
-
-```bash
-make clean                                            # remove objects created by the testsuite
-oc get gateway -A                                     # orphan gateways hold MetalLB IPs; delete leftovers
-kill "$(cat /tmp/kuadrant-ppc64le-dns-helper.pid)"   # stop the DNS helper
-```
-
-### Known order/timing flakes on Power (pass in isolation)
-- `egress/credentials_injection/test_credential_injection_by_destination.py`
-- `gateway/authpolicy/test_authpolicy_section_targeting_gateway.py` (also fails on IBM Z CI)
-- `gateway/reconciliation/change_targetref/test_update_ratelimitpolicy_target_ref.py` (`reruns=0`): RLP `Enforced` /
-  Gateway "affected by" is reported before Envoy runs the new wasm config. The test now waits (max 180 s) until the
-  gateway answers 429 and then for the 10 s window to reset; the original assertions are unchanged (`ppc64le-fix: rlp-retarget`).
-
-If one fails in a batch run, re-run it alone with `./scripts/run-kuadrant-e2e.sh <path>`.
-
-## 7. What the Power workarounds change (and what they do not)
-
-| Workaround | Where | Effect on what is tested |
-|---|---|---|
-| Patched wasm-shim (`apply-wasm-be-fix.sh`, optional) | CSV `inject-wasm` initContainer + `RELATED_IMAGE_WASMSHIM` | Upstream wasm-shim tag (v0.15.0) with one change: `current_log_filter()` returns `WARN` instead of calling the `proxy_get_log_level` host call. Note: ppc64le is little-endian, so the big-endian issue [proxy-wasm-cpp-host#552](https://github.com/proxy-wasm/proxy-wasm-cpp-host/issues/552) does not apply; the official ppc64le wasm loaded without this patch on OCP 4.22 / OSSM 3.4.3. Auth/RateLimit/TRLP logic is unchanged; only the wasm log level is fixed at WARN. |
-| Operator `denyWith` body check (`run-full-e2e-power.sh` preflight) | operator pod `/manager` | No EnvoyFilter workaround is used. The official RHCL 1.5 image (amd64, s390x, ppc64le) emits the valid CEL body `"Too Many Requests\n"`. A malformed body (`body: Too Many Requests\n"!}`) means the operator binary was modified; preflight fails in that case. Checked: with the official binary the EnvoyFilter `generation` stays at 1 and the gateway answers `200 200 429 429 429`. |
-| `kuadrant-coredns` + resolver plugin | `kuadrant-coredns` ns, `kuadrant_coredns_resolve.py` | Test-side DNS only (`*.kuadrant.internal` from the bastion). DNSPolicy/DNSRecord reconciliation is unchanged. |
-| Dataplane readiness waits (`ppc64le-fix:` in tests) | tests/fixtures | Poll until the dataplane shows the expected behaviour (401/403/429/302), bounded (60–180 s); the original assertions run afterwards. |
-| Velocity mockserver templates | `echo_expectation.json`, two authorino fixtures | The ppc64le mockserver build has no JavaScript (Nashorn) engine; same responses in Velocity. |
-
-Checked on the cluster (2026-10-10 audit): with only a RateLimitPolicy (2 req / 10 s) the gateway returns
-`200 200 429 429 429`, and after a limit change `200 200 200 200 429 429`, so rate limiting is enforced, not bypassed.
+4. **Rollback Authorino / Istio Tracing Changes**:
+   - Revert Authorino trust bundle: `oc patch authorino -n kuadrant-system authorino --type json -p '[{"op":"remove","path":"/spec/volumes"}]'`.
+   - Revert Istio tracing: `oc delete telemetry -n istio-system default-telemetry` and remove `spec.values.meshConfig.enableTracing` from `Istio/default`.
+   - Revert Kuadrant dataPlane observability: `./scripts/setup-dataplane-observability.sh --revert`.

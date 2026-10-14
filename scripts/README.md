@@ -41,6 +41,14 @@ Runs specific test modules or test files through the automated pipeline in tmux:
 ./scripts/automate-kuadrant-e2e.sh --test testsuite/tests/singlecluster/limitador
 ```
 
+### PipelinePolicy Extension: Install and Test
+`PipelinePolicy` tests are skipped ("PipelinePolicy CRD is not installed on the cluster") until the CRD **and** the standalone `pipeline-policy` extension controller are installed. `pipeline-policy-e2e.sh` installs only those from the `Kuadrant/helm-charts-olm` chart (details in section 8) without touching the installed RHCL operator, then runs the tests:
+```bash
+./scripts/pipeline-policy-e2e.sh --check      # read-only: CRD, extension pod, operator handshake
+./scripts/pipeline-policy-e2e.sh --render     # render + server dry-run only, applies nothing
+./scripts/pipeline-policy-e2e.sh --all        # install the extension, then run pipeline_policy/ tests
+```
+
 ### Inspect Active Execution & Logs
 ```bash
 # Check status of tmux sessions, pytest processes, DNS helper daemon, and latest results
@@ -74,6 +82,7 @@ Stops helper daemons and deletes leftover test objects (Gateways, HTTPRoutes, Po
 | `setup-dataplane-observability.sh` | Patches Kuadrant CR `kuadrant` with `spec.observability.dataPlane.httpHeaderIdentifier: x-request-id` and tracing configuration. |
 | `setup-kuadrant-coredns.sh` | Deploys CoreDNS with Kuadrant DNSRecord plugin in `kuadrant-coredns` namespace with NodePort `30554` (for DNSPolicy test resolution). |
 | `sync-kuadrant-dns-etcd.sh` | Background daemon polling HTTPRoutes and synchronizing hostnames to SkyDNS etcd keys for bastion resolution of `*.kuadrant.internal`. |
+| **`pipeline-policy-e2e.sh`** | Installs the standalone PipelinePolicy extension (Namespace, CRD, RBAC, Deployment rendered with `helm template` from `Kuadrant/helm-charts-olm`, pinned revision and image digest), waits for the operator handshake, and runs `extensions/pipeline_policy/`. Verifies the RHCL CSV, Subscriptions and operator Deployment are unchanged. Modes: `--check`, `--render`, `--install`, `--test`, `--all`, `--uninstall`. See section 8. |
 | `apply-wasm-be-fix.sh` | Optional/legacy workaround: rebuilds/injects patched wasm-shim without log-level hostcall. (Standard setup uses official binary). |
 
 ---
@@ -235,3 +244,78 @@ cat /root/test/results/full-e2e-<ts>/summary.txt
    - Revert Authorino trust bundle: `oc patch authorino -n kuadrant-system authorino --type json -p '[{"op":"remove","path":"/spec/volumes"}]'`.
    - Revert Istio tracing: `oc delete telemetry -n istio-system default-telemetry` and remove `spec.values.meshConfig.enableTracing` from `Istio/default`.
    - Revert Kuadrant dataPlane observability: `./scripts/setup-dataplane-observability.sh --revert`.
+
+---
+
+## 8. PipelinePolicy Extension (`pipeline-policy-e2e.sh`)
+
+### 8.1 Why a separate script
+The 56 tests under `testsuite/tests/singlecluster/extensions/pipeline_policy/` need more than the CRD:
+- the `PipelinePolicy` CRD (`extensions.kuadrant.io/v1alpha1`, `pipelinepolicies.extensions.kuadrant.io`);
+- the standalone `pipeline-policy` extension pod, which registers with the operator over gRPC (`kuadrant-operator-extensions` Service, port 50052) and sets the `Accepted` / `Enforced` conditions that the tests wait for;
+- for `grpc/` tests, a ThreatAssessment gRPC service image that has a ppc64le build (`default.pipeline_policy_extension_service.image` in `config/settings.local.yaml`).
+
+With only the CRD applied the tests stop skipping and **fail** (no `Enforced=True`), so the script installs the CRD, RBAC and extension together and refuses to run tests until the extension has been accepted by the operator.
+
+### 8.2 What the script does (and does not do)
+- Clones/updates `https://github.com/Kuadrant/helm-charts-olm` into `/root/scratch/helm-charts-olm` and checks out the pinned revision `55df600e7febb9b011518513894cf6447866e733` (override with `HELM_REPO_REF`).
+- Runs `helm template` for **only** `templates/extensions/01-namespace`, `02-crd`, `03-rbac`, `04-deployment`, using `example-extensionCRD.yaml` as the Helm **values** file (it is not a CRD manifest). The operator address is rendered as `kuadrant-operator-extensions.<operator-namespace>.svc:50052`; the namespace is auto-detected (`openshift-operators` for RHCL).
+- Refuses to continue if the rendered output contains `Subscription`, `OperatorGroup`, `CatalogSource`, `ClusterServiceVersion`, `Kuadrant`, `Istio`, `IstioCNI`, `ClusterIssuer` or `NetworkPolicy`.
+- Validates with `oc apply --dry-run=server --validate=strict`, then applies in order: Namespace, CRD (an existing CRD is left alone unless `--force-crd`), RBAC, Deployment.
+- Waits for rollout and for `handshake accepted ... policyKind: PipelinePolicy` in the extension log and, when available, the operator log.
+- Snapshots the CSV, Subscriptions, operator Deployment/pod and Kuadrant CR before and after the install and after the tests. If any of them changes the script exits with code 3.
+- It does **not** run `install.sh` / `install.sh -t` from the Helm repo. That script also creates Subscriptions, OperatorGroups, a CatalogSource, a second `Kuadrant` CR, Istio and the RHBK tools, and it expects `additionalManifests.yaml`. `-t` means "testsuite tools", not "test".
+
+### 8.3 Usage
+Run from the repository root. Run `./scripts/kuadrant-pre-e2e.sh` (or `automate-kuadrant-e2e.sh --setup`) first so the environment file `/tmp/kuadrant-ppc64le-e2e-env.sh` exists, or pass `--pre`.
+
+| Command | Effect |
+|---|---|
+| `./scripts/pipeline-policy-e2e.sh --check` | Read-only. Exit 0 only when CRD, extension Deployment and handshake are all present. |
+| `./scripts/pipeline-policy-e2e.sh --render` | Fetch chart, render, dry-run. Nothing is applied. Output in `<results-dir>/rendered/`. |
+| `./scripts/pipeline-policy-e2e.sh --install` | Idempotent install of the extension, as described above. |
+| `./scripts/pipeline-policy-e2e.sh --test` | Runs the whole `pipeline_policy/` directory through `run-kuadrant-e2e.sh`. Requires the extension to be ready. |
+| `./scripts/pipeline-policy-e2e.sh --test -- <paths/ids>` | Runs only the given pytest paths or ids. |
+| `./scripts/pipeline-policy-e2e.sh --all` | `--install` followed by `--test`. |
+| `./scripts/pipeline-policy-e2e.sh --uninstall` | Removes Deployment, ClusterRoleBinding, ClusterRole, and the namespace. The CRD is kept. |
+| `./scripts/pipeline-policy-e2e.sh --uninstall --delete-crd [--yes]` | Also deletes the CRD. This **deletes every PipelinePolicy object**; they are backed up to `pipelinepolicies-backup.yaml` first and a confirmation is required unless `--yes`. |
+
+Examples:
+```bash
+# Long run: use tmux (SSH sessions time out)
+tmux new -d -s pipeline-policy "cd /root/test/testsuite && ./scripts/pipeline-policy-e2e.sh --all; exec bash"
+
+# Only the gRPC tests
+./scripts/pipeline-policy-e2e.sh --test -- testsuite/tests/singlecluster/extensions/pipeline_policy/grpc/
+```
+
+### 8.4 Configuration
+| Variable | Default | Purpose |
+|---|---|---|
+| `HELM_REPO_URL` / `HELM_REPO_REF` / `HELM_REPO_DIR` | upstream URL / `55df600e...` / `/root/scratch/helm-charts-olm` | Chart source and pinned revision. |
+| `EXTENSION_CRD_FILE` | `<repo>/example-extensionCRD.yaml` | Helm values file with the `extensionCRD:` list. The upstream CRD in `Kuadrant/internal-extensions` additionally has the `store` action fields. |
+| `EXT_IMAGE` | `quay.io/kuadrant/internal-extensions@sha256:a80b7b6f73fe...` | Extension image, pinned to the multi-arch index that includes ppc64le. The `v1.0.x` tags are amd64-only and `latest` is mutable. |
+| `EXT_NAMESPACE` | `kuadrant-extensions` | Namespace of the extension. |
+| `OPERATOR_NAMESPACE` | auto-detected | Namespace of the Service `kuadrant-operator-extensions`. |
+| `RESULTS_ROOT` | `/root/test/results` | Parent of `pipelinepolicy-<timestamp>/`. |
+| `ENV_FILE` | `/tmp/kuadrant-ppc64le-e2e-env.sh` | Environment file written by `kuadrant-pre-e2e.sh`. |
+| `HANDSHAKE_TIMEOUT` | `180` | Seconds to wait for rollout and handshake. |
+
+The ThreatAssessment image for `grpc/` tests is read by the testsuite from `config/settings.local.yaml`:
+```yaml
+default:
+  pipeline_policy_extension_service:
+    image: quay.io/raja-0940/threat-assessment-service:latest   # ppc64le build; the upstream quay.io/kuadrant image is amd64/arm64 only
+```
+
+### 8.5 Output artifacts
+In `<results-dir>` (default `/root/test/results/pipelinepolicy-<ts>/`): `rendered/` manifests, `rhcl-before.txt` / `rhcl-after.txt` / `rhcl-after-tests.txt` snapshots, `pipeline-policy-e2e.log`, `junit-pipeline-policy.xml`, `report-pipeline-policy.html`, `pipeline-policy.console`, `summary.txt`, `exit-code.txt`.
+
+### 8.6 Exit codes
+`0` success, `1` error or test failures, `2` prerequisite failed (tools, login, CSV, Kuadrant not Ready, extension not ready, env file missing, pytest already running), `3` an existing RHCL object changed.
+
+### 8.7 Limits and notes
+- Verified on OpenShift 4.22.8 / ppc64le with `rhcl-operator.v1.5.0` (QE catalog `rhcl-1.5.0-v4.22-rc3`, a pre-release build with a patched wasm-shim). Support for standalone extensions with this downstream build is not confirmed by Red Hat; treat it as experimental.
+- Skips that remain regardless of this script: Auth0 (5), Gateway API CRDs older than v1.5.0 (4), letsencrypt issuer (1).
+- `--test` only runs `pipeline_policy/`. Re-run the regression groups (`authorino`, `limitador`, `gateway`, `tracing`, `observability`, `reconciliation`) or `run-full-e2e-power.sh` after installing the extension.
+- Rollback: `--uninstall`. Delete the CRD only when no PipelinePolicy objects are needed.

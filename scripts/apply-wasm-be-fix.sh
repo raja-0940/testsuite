@@ -55,6 +55,8 @@
 #                       Default: openshift-operators
 #   --skip-build        Skip Rust build; use the existing wasm binary.
 #   --skip-push         Skip podman push (images already in registry).
+#   --skip-image-build  Do not build or push any OCI image; use the existing registry images given by
+#                       --image-tag/--injector-tag (digest references recommended). Never rebuilds the injector.
 #   --dry-run           Show what would be done without making changes.
 #   -h / --help         Show this help and exit.
 # =============================================================================
@@ -67,6 +69,7 @@ INJECTOR_TAG="${INJECTOR_TAG:-quay.io/raja0940/wasm-shim-injector:ppc64le-be-fix
 OPERATOR_NS="${OPERATOR_NS:-openshift-operators}"
 SKIP_BUILD=false
 SKIP_PUSH=false
+SKIP_IMAGE_BUILD=false
 DRY_RUN=false
 
 # ── colours ───────────────────────────────────────────────────────────────────
@@ -94,6 +97,7 @@ while [[ $# -gt 0 ]]; do
     --op-ns)        OPERATOR_NS="$2";  shift 2 ;;
     --skip-build)   SKIP_BUILD=true;   shift   ;;
     --skip-push)    SKIP_PUSH=true;    shift   ;;
+    --skip-image-build) SKIP_IMAGE_BUILD=true; shift ;;
     --dry-run)      DRY_RUN=true;      shift   ;;
     -h|--help)
       grep "^#" "$0" | grep -v "^#!/" | sed 's/^# \{0,1\}//'
@@ -114,7 +118,7 @@ require_cmd python3
 $SKIP_BUILD || require_cmd cargo
 $SKIP_BUILD || require_cmd rustup
 $SKIP_BUILD || require_cmd unzip
-$SKIP_PUSH  || require_cmd podman
+$SKIP_PUSH || $SKIP_IMAGE_BUILD || require_cmd podman
 
 ARCH=$(uname -m)
 if [[ "$ARCH" != "ppc64le" ]]; then
@@ -281,7 +285,11 @@ info "sha256 : $WASM_SHA256   size: $WASM_SIZE"
 # ── step 3: build and push OCI images ─────────────────────────────────────────
 section "Step 3 — Build and push OCI images"
 
-if $DRY_RUN; then
+if $SKIP_IMAGE_BUILD; then
+  ok "Skipping image build/push (--skip-image-build); using existing registry images:"
+  info "  wasm     : $IMAGE_TAG"
+  info "  injector : $INJECTOR_TAG"
+elif $DRY_RUN; then
   warn "[DRY-RUN] Would build: $IMAGE_TAG  (FROM scratch, COPY wasm_shim.wasm /plugin.wasm)"
   warn "[DRY-RUN] Would build: $INJECTOR_TAG  (FROM ubi9-minimal + wasm binary)"
   warn "[DRY-RUN] Would push both images to registry."

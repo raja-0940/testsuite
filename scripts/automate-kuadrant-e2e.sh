@@ -39,7 +39,7 @@ TEST_NS2="${TEST_NS2:-kuadrant2}"
 KUADRANT_NS="${KUADRANT_NS:-kuadrant-system}"
 OP_NS="${OP_NS:-openshift-operators}"
 DNS_ZONE="${DNS_ZONE:-kuadrant.internal}"
-EXPECTED_WASM_SHA="${EXPECTED_WASM_SHA:-41e298e2}"
+EXPECTED_WASM_SHA="${EXPECTED_WASM_SHA:-f97a6864}"
 
 DNS_SYNC_HELPER="${DNS_SYNC_HELPER:-${SCRIPT_DIR}/sync-kuadrant-dns-etcd.sh}"
 DNS_HELPER_PID_FILE="${DNS_HELPER_PID_FILE:-/tmp/kuadrant-ppc64le-dns-helper.pid}"

@@ -40,7 +40,7 @@ types-hvac = "^2.4.0.20260408"
 
 [[tool.poetry.source]]
 name = "ibm-ppc64le"
-url = "https://wheels.developerfirst.ibm.com/ppc64le/linux"
+url = "https://wheels.developerfirst.ibm.com/ppc64le/linux/+simple/"
 priority = "explicit"
 
 [tool.poetry.dependencies]

@@ -14,7 +14,7 @@
 #   RESULTS_ROOT           parent of the run directory (default: /root/test/results)
 #   RUN_DIR                explicit run directory (default: $RESULTS_ROOT/full-e2e-<ts>)
 #   COREDNS_PORT_OVERRIDE  DNS port for *.kuadrant.internal (default: kuadrant-coredns Service NodePort, e.g. 30554)
-#   EXPECTED_WASM_SHA      sha256 prefix of the served wasm (default: patched v0.15.0 build 41e298e2)
+#   EXPECTED_WASM_SHA      sha256 prefix of the served wasm (default: official RHCL wasm-shim 0.15.0 = f97a6864; the custom patched build is 41e298e2)
 #   SKIP_PREFLIGHT=1       skip the preflight checks
 
 set -o pipefail
@@ -28,7 +28,7 @@ KCFG="${KCFG:-/root/openstack-upi/auth/kubeconfig}"
 export COREDNS_PORT_OVERRIDE="${COREDNS_PORT_OVERRIDE:-$(KUBECONFIG="$KCFG" oc get svc kuadrant-coredns -n kuadrant-coredns \
     -o jsonpath='{.spec.ports[?(@.protocol=="UDP")].nodePort}' 2>/dev/null || true)}"
 export COREDNS_PORT_OVERRIDE="${COREDNS_PORT_OVERRIDE:-30554}"
-EXPECTED_WASM_SHA="${EXPECTED_WASM_SHA:-41e298e2}"
+EXPECTED_WASM_SHA="${EXPECTED_WASM_SHA:-f97a6864}"
 SETTINGS="${REPO_DIR}/config/settings.local.yaml"
 
 mkdir -p "$RUN_DIR"
